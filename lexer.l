@@ -1,13 +1,19 @@
-%option c++
 %option noyywrap
 %{
-#include <cstdlib>
-#include <cstring>
-#include "tokens.hpp"  // Token definitions
+#include <stdlib.h>
+#include <string.h>
+#include "parser.tab.hpp"
 
-// Declare Bison semantic value variable (YYSTYPE defined in parser)
 extern YYSTYPE yylval;
+extern int yylineno;
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+int yylex(void);
+#ifdef __cplusplus
+}
+#endif
 %}
 
 DIGIT       [0-9]
@@ -28,6 +34,11 @@ ID          [a-zA-Z_][a-zA-Z0-9_]*
 "return"            { return KEYWORD_RETURN; }
 "is"                { return KEYWORD_IS; }
 "end"               { return KEYWORD_END; }
+"loop"              { return KEYWORD_LOOP; }
+"then"              { return KEYWORD_THEN; }
+"record"            { return KEYWORD_RECORD; }
+"array"             { return KEYWORD_ARRAY; }
+"size"              { return KEYWORD_SIZE; }  // Added for array size
 
 "true"              { yylval.bval = true; return BOOL_LITERAL; }
 "false"             { yylval.bval = false; return BOOL_LITERAL; }
@@ -40,6 +51,9 @@ ID          [a-zA-Z_][a-zA-Z0-9_]*
 ")"                 { return RPAREN; }
 "["                 { return LBRACKET; }
 "]"                 { return RBRACKET; }
+".."                { return DOTDOT; }
+"=>"                { return EQ_GT; }
+"."                 { return DOT; }           // Added for member access
 
 "and"               { return AND_OP; }
 "or"                { return OR_OP; }
@@ -59,23 +73,28 @@ ID          [a-zA-Z_][a-zA-Z0-9_]*
 "*"                 { return MUL_OP; }
 "/"                 { return DIV_OP; }
 
+"integer"           { return TYPE_INTEGER; }
+"real"              { return TYPE_REAL; }
+"boolean"           { return TYPE_BOOLEAN; }
+
 {DIGIT}+"."{DIGIT}+  {
-                        yylval.dval = atof(YYText());
+                        yylval.dval = atof(yytext);
                         return REAL_LITERAL;
                     }
 {DIGIT}+            {
-                        yylval.ival = atoi(YYText());
+                        yylval.ival = atoi(yytext);
                         return INT_LITERAL;
                     }
 {ID}                {
-                        yylval.sval = strdup(YYText());
+                        yylval.sval = strdup(yytext);
                         return IDENTIFIER;
                     }
 
 [ \t\r\n]+          { /* skip whitespace */ }
 "//".*              { /* skip single-line comments */ }
 
-.                   { /* unknown character error or ignore*/ return YYUNDEF; }
+.                   { /* unknown character */ 
+                      return 0; 
+                    }
 
 %%
-

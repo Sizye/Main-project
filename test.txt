@@ -1,0 +1,4 @@
+var asd: record 
+    var x: integer;
+    var y: integer; 
+end

@@ -35,8 +35,8 @@
    especially those whose name start with YY_ or yy_.  They are
    private implementation details that can be changed or removed.  */
 
-#ifndef YY_YY_PARSER_TAB_H_INCLUDED
-# define YY_YY_PARSER_TAB_H_INCLUDED
+#ifndef YY_YY_PARSER_TAB_HPP_INCLUDED
+# define YY_YY_PARSER_TAB_HPP_INCLUDED
 /* Debug traces.  */
 #ifndef YYDEBUG
 # define YYDEBUG 0
@@ -67,37 +67,45 @@ extern int yydebug;
     KEYWORD_RETURN = 268,          /* KEYWORD_RETURN  */
     KEYWORD_IS = 269,              /* KEYWORD_IS  */
     KEYWORD_END = 270,             /* KEYWORD_END  */
-    ASSIGN = 271,                  /* ASSIGN  */
-    COLON = 272,                   /* COLON  */
-    COMMA = 273,                   /* COMMA  */
-    SEMICOLON = 274,               /* SEMICOLON  */
-    LPAREN = 275,                  /* LPAREN  */
-    RPAREN = 276,                  /* RPAREN  */
-    LBRACKET = 277,                /* LBRACKET  */
-    RBRACKET = 278,                /* RBRACKET  */
-    AND_OP = 279,                  /* AND_OP  */
-    OR_OP = 280,                   /* OR_OP  */
-    XOR_OP = 281,                  /* XOR_OP  */
-    NOT_OP = 282,                  /* NOT_OP  */
-    LE_OP = 283,                   /* LE_OP  */
-    GE_OP = 284,                   /* GE_OP  */
-    LT_OP = 285,                   /* LT_OP  */
-    GT_OP = 286,                   /* GT_OP  */
-    EQ_OP = 287,                   /* EQ_OP  */
-    NEQ_OP = 288,                  /* NEQ_OP  */
-    MOD_OP = 289,                  /* MOD_OP  */
-    PLUS_OP = 290,                 /* PLUS_OP  */
-    MINUS_OP = 291,                /* MINUS_OP  */
-    MUL_OP = 292,                  /* MUL_OP  */
-    DIV_OP = 293,                  /* DIV_OP  */
-    EQ_GT = 294,                   /* EQ_GT  */
-    KEYWORD_LOOP = 295,            /* KEYWORD_LOOP  */
-    DOTDOT = 296,                  /* DOTDOT  */
-    KEYWORD_THEN = 297,            /* KEYWORD_THEN  */
-    INT_LITERAL = 298,             /* INT_LITERAL  */
-    REAL_LITERAL = 299,            /* REAL_LITERAL  */
-    BOOL_LITERAL = 300,            /* BOOL_LITERAL  */
-    IDENTIFIER = 301               /* IDENTIFIER  */
+    KEYWORD_LOOP = 271,            /* KEYWORD_LOOP  */
+    KEYWORD_THEN = 272,            /* KEYWORD_THEN  */
+    KEYWORD_RECORD = 273,          /* KEYWORD_RECORD  */
+    KEYWORD_ARRAY = 274,           /* KEYWORD_ARRAY  */
+    KEYWORD_SIZE = 275,            /* KEYWORD_SIZE  */
+    ASSIGN = 276,                  /* ASSIGN  */
+    COLON = 277,                   /* COLON  */
+    COMMA = 278,                   /* COMMA  */
+    SEMICOLON = 279,               /* SEMICOLON  */
+    LPAREN = 280,                  /* LPAREN  */
+    RPAREN = 281,                  /* RPAREN  */
+    LBRACKET = 282,                /* LBRACKET  */
+    RBRACKET = 283,                /* RBRACKET  */
+    DOTDOT = 284,                  /* DOTDOT  */
+    EQ_GT = 285,                   /* EQ_GT  */
+    DOT = 286,                     /* DOT  */
+    AND_OP = 287,                  /* AND_OP  */
+    OR_OP = 288,                   /* OR_OP  */
+    XOR_OP = 289,                  /* XOR_OP  */
+    NOT_OP = 290,                  /* NOT_OP  */
+    LE_OP = 291,                   /* LE_OP  */
+    GE_OP = 292,                   /* GE_OP  */
+    LT_OP = 293,                   /* LT_OP  */
+    GT_OP = 294,                   /* GT_OP  */
+    EQ_OP = 295,                   /* EQ_OP  */
+    NEQ_OP = 296,                  /* NEQ_OP  */
+    MOD_OP = 297,                  /* MOD_OP  */
+    PLUS_OP = 298,                 /* PLUS_OP  */
+    MINUS_OP = 299,                /* MINUS_OP  */
+    MUL_OP = 300,                  /* MUL_OP  */
+    DIV_OP = 301,                  /* DIV_OP  */
+    TYPE_INTEGER = 302,            /* TYPE_INTEGER  */
+    TYPE_REAL = 303,               /* TYPE_REAL  */
+    TYPE_BOOLEAN = 304,            /* TYPE_BOOLEAN  */
+    INT_LITERAL = 305,             /* INT_LITERAL  */
+    REAL_LITERAL = 306,            /* REAL_LITERAL  */
+    BOOL_LITERAL = 307,            /* BOOL_LITERAL  */
+    IDENTIFIER = 308,              /* IDENTIFIER  */
+    UMINUS = 309                   /* UMINUS  */
   };
   typedef enum yytokentype yytoken_kind_t;
 #endif
@@ -106,14 +114,14 @@ extern int yydebug;
 #if ! defined YYSTYPE && ! defined YYSTYPE_IS_DECLARED
 union YYSTYPE
 {
-#line 12 "parser.y"
+#line 21 "parser.y"
 
     int ival;
     double dval;
     bool bval;
     char* sval;
 
-#line 117 "parser.tab.h"
+#line 125 "parser.tab.hpp"
 
 };
 typedef union YYSTYPE YYSTYPE;
@@ -128,4 +136,4 @@ extern YYSTYPE yylval;
 int yyparse (void);
 
 
-#endif /* !YY_YY_PARSER_TAB_H_INCLUDED  */
+#endif /* !YY_YY_PARSER_TAB_HPP_INCLUDED  */

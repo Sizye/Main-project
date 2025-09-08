@@ -2,8 +2,17 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <vector>
+#include <string>
 
-extern int yylex();
+#ifdef __cplusplus
+extern "C" {
+#endif
+int yylex();
+#ifdef __cplusplus
+}
+#endif
+
 extern int yylineno;
 void yyerror(const char *s);
 
@@ -19,19 +28,25 @@ void yyerror(const char *s);
 /* Token declarations */
 %token KEYWORD_VAR KEYWORD_TYPE KEYWORD_ROUTINE KEYWORD_PRINT KEYWORD_IF KEYWORD_ELSE
 %token KEYWORD_WHILE KEYWORD_FOR KEYWORD_IN KEYWORD_REVERSE KEYWORD_RETURN KEYWORD_IS
-%token KEYWORD_END ASSIGN COLON COMMA SEMICOLON LPAREN RPAREN LBRACKET RBRACKET
-%token AND_OP OR_OP XOR_OP NOT_OP LE_OP GE_OP LT_OP GT_OP EQ_OP NEQ_OP MOD_OP
-%token PLUS_OP MINUS_OP MUL_OP DIV_OP
-%token EQ_GT           /* for => */
-%token KEYWORD_LOOP    /* for "loop" */
-%token DOTDOT          /* for ".." */
-%token KEYWORD_THEN    /* for "then" */
-
+%token KEYWORD_END KEYWORD_LOOP KEYWORD_THEN KEYWORD_RECORD KEYWORD_ARRAY KEYWORD_SIZE
+%token ASSIGN COLON COMMA SEMICOLON LPAREN RPAREN LBRACKET RBRACKET DOTDOT EQ_GT DOT
+%token AND_OP OR_OP XOR_OP NOT_OP LE_OP GE_OP LT_OP GT_OP EQ_OP NEQ_OP
+%token MOD_OP PLUS_OP MINUS_OP MUL_OP DIV_OP
+%token TYPE_INTEGER TYPE_REAL TYPE_BOOLEAN
 %token <ival> INT_LITERAL
 %token <dval> REAL_LITERAL
 %token <bval> BOOL_LITERAL
 %token <sval> IDENTIFIER
 
+/* Precedence and associativity */
+%left OR_OP
+%left XOR_OP
+%left AND_OP
+%left EQ_OP NEQ_OP
+%left LT_OP LE_OP GT_OP GE_OP
+%left PLUS_OP MINUS_OP
+%left MUL_OP DIV_OP MOD_OP
+%right NOT_OP UMINUS
 
 /* Define the start symbol */
 %start program
@@ -41,11 +56,16 @@ void yyerror(const char *s);
 program:
     /* empty */
   | program declaration
+  | program routine_forward_declaration
   ;
 
 declaration:
     SimpleDeclaration
   | RoutineDeclaration
+  ;
+
+routine_forward_declaration:
+    KEYWORD_ROUTINE IDENTIFIER LPAREN parameters_opt RPAREN routine_return_opt SEMICOLON
   ;
 
 SimpleDeclaration:
@@ -54,42 +74,52 @@ SimpleDeclaration:
   ;
 
 VariableDeclaration:
-    KEYWORD_VAR IDENTIFIER COLON type_opt is_expression_opt SEMICOLON
-  | KEYWORD_VAR IDENTIFIER is_expression SEMICOLON
-  ;
-
-type_opt:
-    IDENTIFIER     /* Type is identifier */
-  |                 /* empty */
+    KEYWORD_VAR IDENTIFIER COLON type is_expression_opt SEMICOLON
+  | KEYWORD_VAR IDENTIFIER KEYWORD_IS expression SEMICOLON  /* Type inference */
   ;
 
 is_expression_opt:
-    KEYWORD_IS expression
-  |                /* empty */
-  ;
-
-is_expression:
-    KEYWORD_IS expression
+    /* empty */
+  | KEYWORD_IS expression
   ;
 
 TypeDeclaration:
-    KEYWORD_TYPE IDENTIFIER KEYWORD_IS type
+    KEYWORD_TYPE IDENTIFIER KEYWORD_IS type SEMICOLON
   ;
 
 type:
-    IDENTIFIER
-  | primitive_type
+    primitive_type
+  | user_type
+  | IDENTIFIER  /* Type alias */
   ;
 
 primitive_type:
-    /* predefined types */
-    "integer"
-  | "real"
-  | "boolean"
+    TYPE_INTEGER
+  | TYPE_REAL
+  | TYPE_BOOLEAN
+  ;
+
+user_type:
+    ArrayType
+  | RecordType
+  ;
+
+ArrayType:
+    KEYWORD_ARRAY LBRACKET expression RBRACKET type  /* Sized array */
+  | KEYWORD_ARRAY LBRACKET RBRACKET type             /* Unsized array (for parameters) */
+  ;
+
+RecordType:
+    KEYWORD_RECORD record_fields KEYWORD_END
+  ;
+
+record_fields:
+    /* empty */
+  | record_fields VariableDeclaration  /* Record fields are variable declarations */
   ;
 
 RoutineDeclaration:
-    KEYWORD_ROUTINE IDENTIFIER LPAREN parameters_opt RPAREN routine_return_opt routine_body
+    KEYWORD_ROUTINE IDENTIFIER LPAREN parameters_opt RPAREN routine_return_opt routine_body SEMICOLON
   ;
 
 parameters_opt:
@@ -117,49 +147,79 @@ routine_body:
   ;
 
 body:
-    declarations_opt statements_opt
+    body_items_opt
   ;
 
-declarations_opt:
+body_items_opt:
     /* empty */
-  | declarations
+  | body_items
   ;
 
-declarations:
+body_items:
+    body_item
+  | body_items body_item
+  ;
+
+body_item:
     declaration
-  | declarations declaration
-  ;
-
-statements_opt:
-    /* empty */
-  | statements
-  ;
-
-statements:
-    statement
-  | statements statement
+  | statement
   ;
 
 statement:
-    VariableDeclaration
-  | routine_call SEMICOLON
+    routine_call SEMICOLON
   | Assignment SEMICOLON
   | WhileLoop
   | ForLoop
   | IfStatement
   | PrintStatement SEMICOLON
+  | ReturnStatement SEMICOLON
   ;
 
-/* Define other rules as needed like expressions, routine_call, assignment, etc. */
-
-/* Placeholder for actual Expression grammar */
-
 expression:
-    IDENTIFIER
-  | INT_LITERAL
+    relation
+  | expression OR_OP relation
+  | expression XOR_OP relation
+  | expression AND_OP relation
+  ;
+
+relation:
+    simple
+  | relation LT_OP simple
+  | relation LE_OP simple
+  | relation GT_OP simple
+  | relation GE_OP simple
+  | relation EQ_OP simple
+  | relation NEQ_OP simple
+  ;
+
+simple:
+    factor
+  | simple PLUS_OP factor
+  | simple MINUS_OP factor
+  ;
+
+factor:
+    term
+  | factor MUL_OP term
+  | factor DIV_OP term
+  | factor MOD_OP term
+  ;
+
+term:
+    primary
+  | PLUS_OP term %prec UMINUS
+  | MINUS_OP term %prec UMINUS
+  | NOT_OP term
+  ;
+
+primary:
+    INT_LITERAL
   | REAL_LITERAL
   | BOOL_LITERAL
-  /* extend with full expressions */
+  | ModifiablePrimary
+  | routine_call
+  | LPAREN expression RPAREN
+  | KEYWORD_SIZE LPAREN primary RPAREN  /* Array size operation */
   ;
 
 routine_call:
@@ -182,11 +242,9 @@ Assignment:
 
 ModifiablePrimary:
     IDENTIFIER
-  | ModifiablePrimary '.' IDENTIFIER
-  | ModifiablePrimary LBRACKET expression RBRACKET
+  | ModifiablePrimary DOT IDENTIFIER  /* Record member access */
+  | ModifiablePrimary LBRACKET expression RBRACKET  /* Array element access */
   ;
-
-/* Control-flow constructs placeholders */
 
 WhileLoop:
     KEYWORD_WHILE expression KEYWORD_LOOP body KEYWORD_END
@@ -202,8 +260,7 @@ reverse_opt:
   ;
 
 range:
-    expression
-  | expression DOTDOT expression
+    expression DOTDOT expression
   ;
 
 IfStatement:
@@ -221,7 +278,18 @@ PrintStatement:
 
 expression_list:
     expression
-  | expression_list COMMA expression
+  | expression_list COMMA expression  /* Multiple expressions in print */
+  ;
+
+ReturnStatement:
+    KEYWORD_RETURN
+  | KEYWORD_RETURN expression
+  ;
+
+/* Add the missing expression_opt definition */
+expression_opt:
+    /* empty */
+  | expression
   ;
 
 %%
