@@ -1,0 +1,18 @@
+# Executables
+/lexer
+*.exe
+*.out
+
+# Flex generated files
+lex.yy.c
+lex.yy.cc
+*.output
+
+# Object files
+*.o
+*.obj
+
+# Build directories
+/build/
+/obj/
+/bin/
