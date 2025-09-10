@@ -14,6 +14,7 @@ ID          [a-zA-Z_][a-zA-Z0-9_]*
 "var"               { cout << "KEYWORD_VAR\n"; }
 "type"              { cout << "KEYWORD_TYPE\n"; }
 "routine"           { cout << "KEYWORD_ROUTINE\n"; }
+"record"            { cout << "KEYWORD_RECORD\n"; }
 "print"             { cout << "KEYWORD_PRINT\n"; }
 "if"                { cout << "KEYWORD_IF\n"; }
 "else"              { cout << "KEYWORD_ELSE\n"; }
@@ -26,6 +27,10 @@ ID          [a-zA-Z_][a-zA-Z0-9_]*
 "end"               { cout << "KEYWORD_END\n"; }
 "true"              { cout << "BOOL_LITERAL (true)\n"; }
 "false"             { cout << "BOOL_LITERAL (false)\n"; }
+
+"integer"           {cout << "TYPE_INTEGER\n"; }
+"bool"              {cout << "TYPE_BOOLEAN\n"; }
+"real"              {cout << "TYPE_BOOLEAN\n"; }
 
 ":="                { cout << "ASSIGN\n"; }
 ":"                 { cout << "COLON\n"; }
