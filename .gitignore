@@ -16,3 +16,6 @@ lex.yy.cc
 /build/
 /obj/
 /bin/
+
+# .txt files
+*.txt
