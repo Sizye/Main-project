@@ -2,79 +2,80 @@
 %option noyywrap
 %{
 #include <iostream>
+#include <fstream>
+#include <string>
+
 using namespace std;
+    std::ifstream inputFile;
+    std::ofstream outputFile;
 %}
+
+
 
 DIGIT       [0-9]
 ID          [a-zA-Z_][a-zA-Z0-9_]*
 
 %%
 
-"var"               { cout << "KEYWORD_VAR\n";}
-"type"              { cout << "KEYWORD_TYPE\n";}
-"routine"           { cout << "KEYWORD_ROUTINE\n";}
-"print"             { cout << "KEYWORD_PRINT\n";}
-"if"                { cout << "KEYWORD_IF\n";}
-"else"              { cout << "KEYWORD_ELSE\n";}
-"while"             { cout << "KEYWORD_WHILE\n";}
-"for"               { cout << "KEYWORD_FOR\n";}
-"in"                { cout << "KEYWORD_IN\n";}
-"reverse"           { cout << "KEYWORD_REVERSE\n";}
-"return"            { cout << "KEYWORD_RETURN\n";}
-"is"                { cout << "KEYWORD_IS\n";}
-"end"               { cout << "KEYWORD_END\n";}
-"loop"              { cout << "KEYWORD_LOOP\n";}
-"then"              { cout << "KEYWORD_THEN\n";}
-"record"            { cout << "KEYWORD_RECORD\n";}
-"array"             { cout << "KEYWORD_ARRAY\n";}
-"size"              { cout << "KEYWORD_SIZE\n";}  // Added for array size
+"var"               { outputFile << "KEYWORD_VAR\n"; }
+"type"              { outputFile << "KEYWORD_TYPE\n"; }
+"routine"           { outputFile << "KEYWORD_ROUTINE\n"; }
+"print"             { outputFile << "KEYWORD_PRINT\n"; }
+"if"                { outputFile << "KEYWORD_IF\n"; }
+"else"              { outputFile << "KEYWORD_ELSE\n"; }
+"while"             { outputFile << "KEYWORD_WHILE\n"; }
+"for"               { outputFile << "KEYWORD_FOR\n"; }
+"in"                { outputFile << "KEYWORD_IN\n"; }
+"reverse"           { outputFile << "KEYWORD_REVERSE\n"; }
+"return"            { outputFile << "KEYWORD_RETURN\n"; }
+"is"                { outputFile << "KEYWORD_IS\n"; }
+"end"               { outputFile << "KEYWORD_END\n"; }
+"loop"              { outputFile << "KEYWORD_LOOP\n"; }
+"then"              { outputFile << "KEYWORD_THEN\n"; }
+"record"            { outputFile << "KEYWORD_RECORD\n"; }
+"array"             { outputFile << "KEYWORD_ARRAY\n"; }
+"size"              { outputFile << "KEYWORD_SIZE\n"; }
 
-"true"              { cout << "BOOL_LITERAL\n";}
-"false"             { cout << "BOOL_LITERAL\n";}
+"true"              { outputFile << "BOOL_LITERAL\n"; }
+"false"             { outputFile << "BOOL_LITERAL\n"; }
 
-":="                { cout << "ASSIGN\n";}
-":"                 { cout << "COLON\n";}
-","                 { cout << "COMMA\n";}
-";"                 { cout << "SEMICOLON\n";}
-"("                 { cout << "LPAREN\n";}
-")"                 { cout << "RPAREN\n";}
-"["                 { cout << "LBRACKET\n";}
-"]"                 { cout << "RBRACKET\n";}
-".."                { cout << "DOTDOT\n";}
-"=>"                { cout << "EQ_GT\n";}
-"."                 { cout << "DOT\n";}           // Added for member access
+":="                { outputFile << "ASSIGN\n"; }
+":"                 { outputFile << "COLON\n"; }
+","                 { outputFile << "COMMA\n"; }
+";"                 { outputFile << "SEMICOLON\n"; }
+"("                 { outputFile << "LPAREN\n"; }
+")"                 { outputFile << "RPAREN\n"; }
+"["                 { outputFile << "LBRACKET\n"; }
+"]"                 { outputFile << "RBRACKET\n"; }
+".."                { outputFile << "DOTDOT\n"; }
+"=>"                { outputFile << "EQ_GT\n"; }
+"."                 { outputFile << "DOT\n"; }
 
-"and"               { cout << "AND_OP\n";}
-"or"                { cout << "OR_OP\n";}
-"xor"               { cout << "XOR_OP\n";}
-"not"               { cout << "NOT_OP\n";}
+"and"               { outputFile << "AND_OP\n"; }
+"or"                { outputFile << "OR_OP\n"; }
+"xor"               { outputFile << "XOR_OP\n"; }
+"not"               { outputFile << "NOT_OP\n"; }
 
-"<="                { cout << "LE_OP\n";}
-">="                { cout << "GE_OP\n";}
-"<"                 { cout << "LT_OP\n";}
-">"                 { cout << "GT_OP\n";}
-"="                 { cout << "EQ_OP\n";}
-"/="                { cout << "NEQ_OP\n";}
+"<="                { outputFile << "LE_OP\n"; }
+">="                { outputFile << "GE_OP\n"; }
+"<"                 { outputFile << "LT_OP\n"; }
+">"                 { outputFile << "GT_OP\n"; }
+"="                 { outputFile << "EQ_OP\n"; }
+"/="                { outputFile << "NEQ_OP\n"; }
 
-"%"                 { cout << "MOD_OP\n";}
-"+"                 { cout << "PLUS_OP\n";}
-"-"                 { cout << "MINUS_OP\n";}
-"*"                 { cout << "MUL_OP\n";}
-"/"                 { cout << "DIV_OP\n";}
+"%"                 { outputFile << "MOD_OP\n"; }
+"+"                 { outputFile << "PLUS_OP\n"; }
+"-"                 { outputFile << "MINUS_OP\n"; }
+"*"                 { outputFile << "MUL_OP\n"; }
+"/"                 { outputFile << "DIV_OP\n"; }
 
-"integer"           { cout << "TYPE_INTEGER\n";}
-"real"              { cout << "TYPE_REAL\n";}
-"boolean"           { cout << "TYPE_BOOLEAN\n";}
+"integer"           { outputFile << "TYPE_INTEGER\n"; }
+"real"              { outputFile << "TYPE_REAL\n"; }
+"boolean"           { outputFile << "TYPE_BOOLEAN\n"; }
 
-{DIGIT}+"."{DIGIT}+  {
-                        cout << "REAL_LITERAL\n";
-                    }
-{DIGIT}+            {
-                        cout << "INT_LITERAL\n";
-                    }
-{ID}                {
-                        cout << "IDENTIFIER\n";
-                    }
+{DIGIT}+"."{DIGIT}+ { outputFile << "REAL_LITERAL\n"; }
+{DIGIT}+            { outputFile << "INT_LITERAL\n"; }
+{ID}                { outputFile << "IDENTIFIER\n"; }
 
 [ \t\r\n]+          { /* skip whitespace */ }
 "//".*              { /* skip single-line comments */ }
@@ -85,9 +86,39 @@ ID          [a-zA-Z_][a-zA-Z0-9_]*
 
 %%
 
-int main() {
-    yyFlexLexer scanner;
+int main(int argc, char** argv) {
+    // Check command line arguments
+    if (argc != 3) {
+        cerr << "Usage: " << argv[0] << " <input_file> <output_file>" << endl;
+        return 1;
+    }
+    
+    // Open input file
+    inputFile.open(argv[1]);
+    if (!inputFile.is_open()) {
+        cerr << "Error: Cannot open input file '" << argv[1] << "'" << endl;
+        return 1;
+    }
+    
+    // Open output file
+    outputFile.open(argv[2]);
+    if (!outputFile.is_open()) {
+        cerr << "Error: Cannot open output file '" << argv[2] << "'" << endl;
+        inputFile.close();
+        return 1;
+    }
+    
+    // Create lexer and set input stream
+    yyFlexLexer scanner(&inputFile, &outputFile);
+    
+    // Tokenize the input
     while(scanner.yylex() != 0);
+    
+    // Close files
+    inputFile.close();
+    outputFile.close();
+    
+    cout << "Tokenization complete. Output written to '" << argv[2] << "'" << endl;
+    
     return 0;
 }
-
