@@ -16,6 +16,6 @@
     ```
 * Finally execute object file
   ```bash
-  ./lexer
+  ./lexer [input.txt] [output.txt]
     ```
 Then write any string from I toy programming language and program will return program in tokens.
