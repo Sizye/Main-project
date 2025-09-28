@@ -5,8 +5,7 @@
 *.out
 
 # Flex generated files
-lex.yy.c
-lex.yy.cc
+lex.yy*
 *.output
 
 # Object files
