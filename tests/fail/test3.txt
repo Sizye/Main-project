@@ -1,0 +1,1 @@
+type BadArray is array[1..5] integer;

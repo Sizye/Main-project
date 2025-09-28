@@ -1,0 +1,5 @@
+var x : integer is 10;
+var y : real is 3.14;
+var z : boolean is true;
+var a is 42;
+var b is false;

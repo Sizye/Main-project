@@ -1,0 +1,15 @@
+routine test_arrays() is
+    type Arr is array[5] integer;
+    var a : Arr;
+    var i : integer;
+    
+    for i in 1..5 loop
+        a[i] := i * 10;
+    end
+    
+    print size(a);
+    
+    for i in 1..5 loop
+        print a[i];
+    end
+end

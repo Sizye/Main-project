@@ -1,0 +1,31 @@
+routine factorial(n : integer) : integer is
+    if n <= 1 then
+        return 1;
+    else
+        return n * factorial(n - 1);
+    end
+end
+
+routine main() is
+    var n : integer;
+    var result : integer;
+    
+    n := 5;
+    result := factorial(n);
+    
+    print result;
+    
+    type Student is record
+        var id : integer;
+        var grade : real;
+    end;
+    
+    type Class is array[10] Student;
+    var cs101 : Class;
+    var i : integer;
+    
+    for i in 1..10 loop
+        cs101[i].id := 1000 + i;
+        cs101[i].grade := 75.0 + i * 2.5;
+    end
+end

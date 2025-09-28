@@ -1,0 +1,250 @@
+
+
+Test 1: Basic Variable Declaration and Print
+-------------------------------------------
+Program Code:
+routine main()
+    var x: integer is 42;
+    print x;
+end
+
+Expected Output: 42
+
+---
+
+Test 2: Variable Declaration with Type Inference
+-----------------------------------------------
+Program Code:
+routine main()
+    var y is 3.14;
+    print y;
+end
+
+Expected Output: 3.14
+
+---
+
+Test 3: Boolean Operations and If with Top-Level Variables
+---------------------------------------------------------
+Program Code:
+var a: boolean is true;
+var b: boolean is false;
+var c: boolean is a and not b;
+routine main()
+    if c then
+        print true;
+    else
+        print false;
+    end
+end
+
+Expected Output: true
+
+---
+
+Test 4: Array Declaration Inside Routine
+---------------------------------------
+Program Code:
+routine main()
+    type IntArray is array[5] integer;
+    var arr: IntArray;
+    arr[1] := 10;
+    arr[2] := 20;
+    print arr[1] + arr[2];
+end
+
+Expected Output: 30
+
+
+---
+
+Test 5: Nested Record Type and Member Access
+--------------------------------------------
+Program Code:
+type Point is record
+    var x: integer;
+    var y: integer;
+end
+type Line is record
+    var p1: Point;
+    var p2: Point;
+end
+routine main()
+    var pt: Point;
+    pt.x := 5;
+    pt.y := 10;
+    print pt.x + pt.y;
+end
+
+Expected Output: 15
+
+---
+
+Test 6: For Loop with Reverse Range
+-----------------------------------
+Program Code:
+routine main()
+    var sum: integer is 0;
+    for i in 5..1 reverse loop
+        sum := sum + i;
+    end
+    print sum;
+end
+
+Expected Output: 15
+
+
+---
+
+Test 7: Function with Integer Return
+-----------------------------------
+Program Code:
+routine add(x: integer, y: integer): integer
+    return x + y;
+end
+routine main()
+    var result: integer is add(3, 7);
+    print result;
+end
+
+Expected Output: 10
+
+---
+
+Test 8: Scope Shadowing in If Statement
+---------------------------------------
+Program Code:
+routine main()
+    var x: integer is 100;
+    if true then
+        var x: integer is 200; // shadows outer x
+        print x;
+    end
+    print x; // outer x
+end
+
+Expected Output: 200 100
+
+---
+
+Test 9: Type Alias Declaration
+------------------------------
+Program Code:
+type MyInt is integer;
+routine main()
+    var val: MyInt is 123;
+    print val;
+end
+
+Expected Output: 123
+
+---
+
+Test 10: Sizeless Array Parameter with For Loop
+----------------------------------------------
+Program Code:
+routine printArray(arr: array[] integer)
+    var i: integer;
+    for i in 1..arr.size loop
+        print arr[i];
+    end
+end
+type MyArray is array[3] integer;
+routine main()
+    var a: MyArray;
+    a[1] := 1; a[2] := 2; a[3] := 3;
+    printArray(a);
+end
+
+Expected Output: 1 2 3
+
+---
+
+Test 11: Record Type with Shadowing in Nested Scope
+--------------------------------------------------
+Program Code:
+type Point is record
+    var x: integer;
+    var y: integer;
+end
+routine main()
+    var pt: Point;
+    pt.x := 5;
+    if true then
+        var x: integer is 10; // shadows pt.x if accessed
+        print x + pt.y; // uses local x and pt.y
+    end
+    print pt.x; // unchanged
+end
+
+Expected Output: 10 5
+
+---
+
+Test 12: While Loop with Forward Declaration
+--------------------------------------------
+Program Code:
+routine increment(n: integer): integer; // forward
+routine main()
+    var count: integer is 0;
+    while count < 3 loop
+        count := increment(count);
+        print count;
+    end
+end
+routine increment(n: integer): integer
+    return n + 1;
+end
+
+Expected Output: 1 2 3
+
+---
+
+Test 13: Array Reference Semantics
+----------------------------------
+Program Code:
+type IntArray is array[5] integer;
+routine main()
+    var arr: IntArray;
+    arr[1] := 10;
+    var arr2: IntArray is arr; // reference copy
+    arr2[2] := 20;
+    print arr[1] + arr[2];
+end
+
+Expected Output: 30
+
+Notes: Tests reference semantics for user-defined types (assignment copies reference, page 2). ArrayType with index 1-based (page 3). Expression sums to 30 (page 6). Valid in RoutineBody (page 5).
+
+---
+
+Test 14: Mixed-Type Function and Multiple Print
+----------------------------------------------
+Program Code:
+routine add(x: integer, y: real): real
+    return x + y;
+end
+routine main()
+    print add(5, 2.5), true;
+end
+
+Expected Output: 7.5 true
+
+
+---
+
+Test 15: Failure - Assignment to Read-Only Loop Variable
+-------------------------------------------------------
+Program Code:
+routine main()
+    var sum: integer is 0;
+    for i in 5..1 reverse loop
+        i := i + 1; // invalid: loop var is read-only
+        sum := sum + i;
+    end
+    print sum;
+end
+
+Expected Output: Compilation fails
+
+---

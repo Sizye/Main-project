@@ -14,7 +14,14 @@ int yylex();
 #endif
 
 extern int yylineno;
+extern char* yytext;
 void yyerror(const char *s);
+
+// Add this for better error reporting
+void print_context(const char* s) {
+    fprintf(stderr, "Parse error at line %d: %s\n", yylineno, s);
+    fprintf(stderr, "Near: '%s'\n", yytext);
+}
 
 %}
 
@@ -75,7 +82,7 @@ SimpleDeclaration:
 
 VariableDeclaration:
     KEYWORD_VAR IDENTIFIER COLON type is_expression_opt SEMICOLON
-  | KEYWORD_VAR IDENTIFIER KEYWORD_IS expression SEMICOLON  /* Type inference */
+  | KEYWORD_VAR IDENTIFIER KEYWORD_IS expression SEMICOLON
   ;
 
 is_expression_opt:
@@ -90,7 +97,7 @@ TypeDeclaration:
 type:
     primitive_type
   | user_type
-  | IDENTIFIER  /* Type alias */
+  | IDENTIFIER
   ;
 
 primitive_type:
@@ -105,8 +112,8 @@ user_type:
   ;
 
 ArrayType:
-    KEYWORD_ARRAY LBRACKET expression RBRACKET type  /* Sized array */
-  | KEYWORD_ARRAY LBRACKET RBRACKET type             /* Unsized array (for parameters) */
+    KEYWORD_ARRAY LBRACKET expression RBRACKET type
+  | KEYWORD_ARRAY LBRACKET RBRACKET type
   ;
 
 RecordType:
@@ -115,11 +122,11 @@ RecordType:
 
 record_fields:
     /* empty */
-  | record_fields VariableDeclaration  /* Record fields are variable declarations */
+  | record_fields VariableDeclaration
   ;
 
 RoutineDeclaration:
-    KEYWORD_ROUTINE IDENTIFIER LPAREN parameters_opt RPAREN routine_return_opt routine_body SEMICOLON
+    KEYWORD_ROUTINE IDENTIFIER LPAREN parameters_opt RPAREN routine_return_opt routine_body
   ;
 
 parameters_opt:
@@ -147,17 +154,8 @@ routine_body:
   ;
 
 body:
-    body_items_opt
-  ;
-
-body_items_opt:
     /* empty */
-  | body_items
-  ;
-
-body_items:
-    body_item
-  | body_items body_item
+  | body body_item
   ;
 
 body_item:
@@ -165,11 +163,12 @@ body_item:
   | statement
   ;
 
+/* FIXED: Control structures don't need semicolons */
 statement:
     routine_call SEMICOLON
   | Assignment SEMICOLON
   | WhileLoop
-  | ForLoop
+  | ForLoop  
   | IfStatement
   | PrintStatement SEMICOLON
   | ReturnStatement SEMICOLON
@@ -219,7 +218,7 @@ primary:
   | ModifiablePrimary
   | routine_call
   | LPAREN expression RPAREN
-  | KEYWORD_SIZE LPAREN primary RPAREN  /* Array size operation */
+  | KEYWORD_SIZE LPAREN primary RPAREN
   ;
 
 routine_call:
@@ -242,8 +241,8 @@ Assignment:
 
 ModifiablePrimary:
     IDENTIFIER
-  | ModifiablePrimary DOT IDENTIFIER  /* Record member access */
-  | ModifiablePrimary LBRACKET expression RBRACKET  /* Array element access */
+  | ModifiablePrimary DOT IDENTIFIER
+  | ModifiablePrimary LBRACKET expression RBRACKET
   ;
 
 WhileLoop:
@@ -252,6 +251,7 @@ WhileLoop:
 
 ForLoop:
     KEYWORD_FOR IDENTIFIER KEYWORD_IN range reverse_opt KEYWORD_LOOP body KEYWORD_END
+  | KEYWORD_FOR IDENTIFIER KEYWORD_IN expression reverse_opt KEYWORD_LOOP body KEYWORD_END
   ;
 
 reverse_opt:
@@ -278,7 +278,7 @@ PrintStatement:
 
 expression_list:
     expression
-  | expression_list COMMA expression  /* Multiple expressions in print */
+  | expression_list COMMA expression
   ;
 
 ReturnStatement:
@@ -286,23 +286,17 @@ ReturnStatement:
   | KEYWORD_RETURN expression
   ;
 
-/* Add the missing expression_opt definition */
-expression_opt:
-    /* empty */
-  | expression
-  ;
-
 %%
 
 int main() {
-  printf("Starting parsing...\n");
-  if (yyparse() == 0)
-    printf("Parse successful!\n");
-  else
-    printf("Parse failed.\n");
-  return 0;
+    printf("Starting parsing...\n");
+    if (yyparse() == 0)
+        printf("Parse successful!\n");
+    else
+        printf("Parse failed.\n");
+    return 0;
 }
 
 void yyerror(const char* s) {
-  fprintf(stderr, "Parse error at line %d: %s\n", yylineno, s);
+    print_context(s);
 }

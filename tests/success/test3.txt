@@ -1,0 +1,6 @@
+type Vector is array[5] real;
+type Matrix is array[3] Vector;
+type Person is record
+    var name : array[20] integer;
+    var age : integer;
+end;

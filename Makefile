@@ -10,11 +10,28 @@ parser: parser.tab.cpp lex.yy.cpp
 parser.tab.cpp: parser.y
 	$(YACC) -d -o parser.tab.cpp parser.y
 
-lex.yy.cpp: lexer.l
+lexer: lexer.l
 	$(LEX) -o lex.yy.cpp lexer.l
 
+all: lexer parser
+
 clean:
-	rm -f parser parser.tab.cpp parser.tab.hpp lex.yy.cpp
+	rm -f parser parser.tab.c* parser.tab.h lex.yy.c*
 
 test:
 	./parser < test.txt
+
+parser_clean:
+	rm -f parser.tab.*
+	rm parser
+
+lexer_clean:
+	rm -f lexer.yy.*
+
+test_succ:
+	@for file in $$(find tests/success -name "test*" -type f | sort); do \
+		echo "Testing $$file..."; \
+		./parser < "$$file" || { echo "FAILED: $$file"; exit 1; }; \
+		echo "PASS: $$file"; \
+	done
+	@echo "All success tests passed!"

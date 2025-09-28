@@ -1,0 +1,13 @@
+routine add(a : integer, b : integer) : integer is
+    return a + b;
+end
+
+routine print_sum(x : integer, y : integer) is
+    print x + y;
+end
+
+routine multiply(a : integer, b : integer) : integer;
+
+routine multiply(a : integer, b : integer) : integer is
+    return a * b;
+end

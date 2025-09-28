@@ -1,5 +1,6 @@
 # Executables
 /lexer
+/parser
 *.exe
 *.out
 
@@ -16,3 +17,6 @@ lex.yy.cc
 /build/
 /obj/
 /bin/
+
+# Parser generated files
+parser.tab.*

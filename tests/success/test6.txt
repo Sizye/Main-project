@@ -1,0 +1,15 @@
+routine test_expressions(a : integer, b : integer) : integer is
+    var x : integer;
+    var y : real;
+    var z : boolean;
+    
+    x := a + b * 2;
+    y := (a + b) / 2.0;
+    z := (a > b) and (b >= 0);
+    
+    if not z or (a = b) then
+        x := -x;
+    end
+    
+    return x % 3;
+end

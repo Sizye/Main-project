@@ -1,0 +1,4 @@
+routine outer() is
+    routine inner() is  // Should fail
+    end;
+end;
