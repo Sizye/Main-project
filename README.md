@@ -4,12 +4,7 @@
 - Flex
 - Bison
 
-### Steps to compile lexer
-* Run lex.yy.cc file generation using flex:
-    > flex lexer.l
-* Compile lex.yy.cc file using g++
-    > g++ lex.yy.cc -o lexer
-* Finally execute object file
-    > ./lexer
-
-Then write any string from I toy programming language and program will return program in tokens.
+### To compile parser & lexer
+    > make all 
+### To run tests
+    > make test_succ
