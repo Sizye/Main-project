@@ -66,12 +66,12 @@ routine processPerson(p : Person) : boolean is
     var isValid : boolean;
     
     isValid := (p.id > 0) and (p.height > 0.0);
-
+    
     if isValid then
         globalCounter := globalCounter + 1;
-        print p.id;
+        print "Processed person ID:", p.id;
     else
-        print isValid;
+        print "Invalid person data";
     end
     
     return isValid;
@@ -158,16 +158,16 @@ routine runComplexCalculations() is
     end
     
     stats := calculateStats(data, 20);
-    print stats;
+    print "Average:", stats;
     
     for i in 1..5 loop
         complexResult := complexOperation(i, stats, true);
-        print  i, complexResult;
+        print "Complex result for", i, ":", complexResult;
     end
     
     for i in 1..10 loop
         if processPerson(people[i]) then
-            print i;
+            print "Successfully processed person";
         end
     end
 end
@@ -177,7 +177,7 @@ routine main() is
     var factResult : integer;
     var fibResult : integer;
     
-    print n;
+    print "Starting Ultimate Test...";
     
     initializeSystem();
     
@@ -185,10 +185,12 @@ routine main() is
     factResult := factorial(n);
     fibResult := fibonacci(n);
     
+    print "Factorial of", n, "is", factResult;
+    print "Fibonacci of", n, "is", fibResult;
+    print "Global counter:", globalCounter;
     
     runComplexCalculations();
     
-
     var i : integer;
     var j : integer;
     
@@ -196,17 +198,16 @@ routine main() is
         j := 1;
         while j <= 3 loop
             if (i + j) % 2 = 0 then
-                print i, j, i + j;
+                print "Even sum:", i, "+", j, "=", i + j;
             else
-                print i, j, i + j;
+                print "Odd sum:", i, "+", j, "=", i + j;
             end
             j := j + 1;
         end
     end
     
-    print j;
+    print "Ultimate test completed successfully!";
 end
-
 
 routine testRunner() is
     main();

@@ -39,6 +39,7 @@ void print_context(const char* s) {
 %token AND_OP OR_OP XOR_OP NOT_OP LE_OP GE_OP LT_OP GT_OP EQ_OP NEQ_OP
 %token MOD_OP PLUS_OP MINUS_OP MUL_OP DIV_OP
 %token TYPE_INTEGER TYPE_REAL TYPE_BOOLEAN
+%token <sval> STRING_LITERAL 
 %token <ival> INT_LITERAL
 %token <dval> REAL_LITERAL
 %token <bval> BOOL_LITERAL
@@ -216,6 +217,7 @@ primary:
     INT_LITERAL
   | REAL_LITERAL
   | BOOL_LITERAL
+  | STRING_LITERAL
   | ModifiablePrimary
   | routine_call
   | LPAREN expression RPAREN

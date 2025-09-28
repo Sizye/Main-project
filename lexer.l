@@ -18,8 +18,21 @@ int yylex(void);
 
 DIGIT       [0-9]
 ID          [a-zA-Z_][a-zA-Z0-9_]*
-
+STRING      \"([^"\\]|\\.)*\"
 %%
+{STRING}            {
+                        // Remove quotes and store the string content
+                        char* str = strdup(yytext);
+                        int len = strlen(str);
+                        if (len >= 2) {
+                            str[len-1] = '\0';  // Remove closing quote
+                            yylval.sval = str + 1;  // Skip opening quote
+                        } else {
+                            yylval.sval = strdup("");
+                        }
+                        return STRING_LITERAL;
+                    }
+
 \n                  { yylineno++; }
 "var"               { return KEYWORD_VAR; }
 "type"              { return KEYWORD_TYPE; }

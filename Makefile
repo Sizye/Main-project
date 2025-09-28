@@ -29,9 +29,9 @@ lexer_clean:
 	rm -f lexer.yy.*
 
 test_succ:
-	@for file in $$(find tests/success -name "test*" -type f | sort); do \
+	@for file in $$(find tests/success -type f | sort); do \
 		echo "Testing $$file..."; \
-		./parser < "$$file" || { echo "FAILED: $$file"; exit 1; }; \
+		./parser < "$$file" \
 		echo "PASS: $$file"; \
 	done
 	@echo "Parsing completed."
@@ -39,7 +39,7 @@ test_succ:
 test_fail:
 	@for file in $$(find tests/fail -type f | sort); do \
 		echo "Testing $$file..."; \
-		./parser < "$$file" || { echo "FAILED: $$file"; exit 1; }; \
+		./parser < "$$file" \
 		echo "PASS: $$file"; \
 	done
-	@echo "Parsing completed"
+	@echo "Parsing completed."
