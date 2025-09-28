@@ -1,0 +1,6 @@
+routine complex() is
+    if true then
+        routine nested() is
+        end
+    end
+end

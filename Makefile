@@ -16,7 +16,7 @@ lexer: lexer.l
 all: lexer parser
 
 clean:
-	rm -f parser parser.tab.c* parser.tab.h lex.yy.c*
+	rm -f parser parser.tab.* parser.tab.h lex.yy.c*
 
 test:
 	./parser < test.txt
@@ -34,4 +34,12 @@ test_succ:
 		./parser < "$$file" || { echo "FAILED: $$file"; exit 1; }; \
 		echo "PASS: $$file"; \
 	done
-	@echo "All success tests passed!"
+	@echo "Parsing completed."
+
+test_fail:
+	@for file in $$(find tests/fail -type f | sort); do \
+		echo "Testing $$file..."; \
+		./parser < "$$file" || { echo "FAILED: $$file"; exit 1; }; \
+		echo "PASS: $$file"; \
+	done
+	@echo "Parsing completed"

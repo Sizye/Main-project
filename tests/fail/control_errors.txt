@@ -1,0 +1,8 @@
+if x > 0 then
+    print "Positive"
+
+while x < 10 loop
+    x := x + 1
+
+for i in 1..10 
+    print i

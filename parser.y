@@ -17,7 +17,6 @@ extern int yylineno;
 extern char* yytext;
 void yyerror(const char *s);
 
-// Add this for better error reporting
 void print_context(const char* s) {
     fprintf(stderr, "Parse error at line %d: %s\n", yylineno, s);
     fprintf(stderr, "Near: '%s'\n", yytext);
@@ -62,14 +61,16 @@ void print_context(const char* s) {
 
 program:
     /* empty */
-  | program declaration
-  | program routine_forward_declaration
+  | program top_level_declaration
   ;
 
-declaration:
+top_level_declaration:
     SimpleDeclaration
   | RoutineDeclaration
+  | routine_forward_declaration
   ;
+
+/* REMOVED: declaration rule that allowed nested routines */
 
 routine_forward_declaration:
     KEYWORD_ROUTINE IDENTIFIER LPAREN parameters_opt RPAREN routine_return_opt SEMICOLON
@@ -158,12 +159,12 @@ body:
   | body body_item
   ;
 
+/* FIXED: Only allow SimpleDeclaration (variables/types), NOT RoutineDeclaration */
 body_item:
-    declaration
+    SimpleDeclaration    /* CHANGED: No RoutineDeclaration here! */
   | statement
   ;
 
-/* FIXED: Control structures don't need semicolons */
 statement:
     routine_call SEMICOLON
   | Assignment SEMICOLON

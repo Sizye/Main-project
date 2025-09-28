@@ -1,0 +1,213 @@
+type IntAlias is integer;
+type RealAlias is real;
+type BoolAlias is boolean;
+
+type Vector is array[3] real;
+type Matrix is array[3] Vector;
+
+type Person is record
+    var id : integer;
+    var name : array[50] integer;
+    var height : real;
+    var isStudent : boolean;
+end;
+
+type Department is record
+    var name : array[30] integer;
+    var employees : array[100] Person;
+    var budget : real;
+end;
+
+type Company is record
+    var departments : array[10] Department;
+    var ceo : Person;
+end;
+
+var globalCounter : integer is 0;
+var pi : real is 3.14159;
+var systemActive : boolean is true;
+
+var people : array[100] Person;
+var matrices : array[5] Matrix;
+var corp : Company;
+
+routine processPerson(p : Person) : boolean;
+routine calculateStats(data : array[] real, count : integer) : real;
+routine complexOperation(x : integer, y : real, flag : boolean) : real;
+
+routine factorial(n : integer) : integer is
+    if n <= 1 then
+        return 1;
+    else
+        return n * factorial(n - 1);
+    end
+end
+
+routine fibonacci(n : integer) : integer is
+    var a : integer is 0;
+    var b : integer is 1;
+    var temp : integer;
+    var i : integer;
+    
+    if n = 0 then
+        return a;
+    end
+    
+    for i in 2..n loop
+        temp := a + b;
+        a := b;
+        b := temp;
+    end
+    
+    return b;
+end
+
+routine processPerson(p : Person) : boolean is
+    var isValid : boolean;
+    
+    isValid := (p.id > 0) and (p.height > 0.0);
+
+    if isValid then
+        globalCounter := globalCounter + 1;
+        print p.id;
+    else
+        print isValid;
+    end
+    
+    return isValid;
+end
+
+routine calculateStats(data : array[] real, count : integer) : real is
+    var sum : real is 0.0;
+    var avg : real;
+    var i : integer;
+    
+    if count <= 0 then
+        return 0.0;
+    end
+    
+    for i in 1..size(data) loop
+        if i <= count then
+            sum := sum + data[i];
+        end
+    end
+    
+    avg := sum / count;
+    return avg;
+end
+
+routine complexOperation(x : integer, y : real, flag : boolean) : real is
+    var result : real;
+    
+    if flag then
+        result := (x * y) + factorial(x);
+    else
+        result := (x / y) - fibonacci(x);
+    end
+    
+    if result < 0.0 then
+        result := -result;
+    end
+    
+    return result;
+end
+
+routine initializeSystem() is
+    var i : integer;
+    var j : integer;
+    var k : integer;
+    
+    for i in 1..100 loop
+        people[i].id := 1000 + i;
+        people[i].height := 1.5 + (i % 10) * 0.1;
+        people[i].isStudent := (i % 3) = 0;
+    end
+    
+    for i in 1..5 loop
+        for j in 1..3 loop
+            for k in 1..3 loop
+                matrices[i][j][k] := (i * j * k) * 0.1;
+            end
+        end
+    end
+    
+    corp.ceo.id := 1;
+    corp.ceo.height := 1.85;
+    corp.ceo.isStudent := false;
+    
+    for i in 1..10 loop
+        corp.departments[i].budget := 100000.0 * i;
+        
+        for j in 1..50 loop
+            var empId : integer;
+            empId := (i * 100) + j;
+            corp.departments[i].employees[j].id := empId;
+            corp.departments[i].employees[j].height := 1.6 + (empId % 10) * 0.05;
+        end
+    end
+end
+
+routine runComplexCalculations() is
+    var data : array[20] real;
+    var i : integer;
+    var stats : real;
+    var complexResult : real;
+    
+    for i in 1..20 loop
+        data[i] := i * 2.5 + (i % 3);
+    end
+    
+    stats := calculateStats(data, 20);
+    print stats;
+    
+    for i in 1..5 loop
+        complexResult := complexOperation(i, stats, true);
+        print  i, complexResult;
+    end
+    
+    for i in 1..10 loop
+        if processPerson(people[i]) then
+            print i;
+        end
+    end
+end
+
+routine main() is
+    var n : integer;
+    var factResult : integer;
+    var fibResult : integer;
+    
+    print n;
+    
+    initializeSystem();
+    
+    n := 10;
+    factResult := factorial(n);
+    fibResult := fibonacci(n);
+    
+    
+    runComplexCalculations();
+    
+
+    var i : integer;
+    var j : integer;
+    
+    for i in 1..3 loop
+        j := 1;
+        while j <= 3 loop
+            if (i + j) % 2 = 0 then
+                print i, j, i + j;
+            else
+                print i, j, i + j;
+            end
+            j := j + 1;
+        end
+    end
+    
+    print j;
+end
+
+
+routine testRunner() is
+    main();
+end

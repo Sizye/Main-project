@@ -1,0 +1,3 @@
+routine bad() is;
+routine bad2(;
+routine bad3(a integer) is;
