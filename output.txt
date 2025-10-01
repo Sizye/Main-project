@@ -1,0 +1,13 @@
+PARSING: program -> empty (line 1)
+REDUCED: program -> AST Node: created (line 1)
+
+PARSE ERROR at line 1: syntax error
+Near token: ';'
+
+=== КОМПИЛЯТОР ИМПЕРАТИВНОГО ЯЗЫКА С AST ===
+Разбор с подробной отладкой и построением AST
+Установите debug_enabled=0 для отключения отладки парсера
+Установите ast_debug=0 для отключения отладки AST
+
+
+=== РАЗБОР НЕУДАЧЕН ===

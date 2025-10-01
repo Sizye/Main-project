@@ -1,45 +1,19 @@
-# Makefile
-CC = g++
+CXX = g++
 LEX = flex
 YACC = bison
-CFLAGS = -std=c++11
+CXXFLAGS = -std=c++11 -Wall -Wextra -g
+INCLUDES = -I.
 
-parser: parser.tab.cpp lex.yy.cpp
-	$(CC) $(CFLAGS) -o parser parser.tab.cpp lex.yy.cpp -lfl
+all: parser
 
-parser.tab.cpp: parser.y
-	$(YACC) -d -o parser.tab.cpp parser.y
+parser: parser.tab.cpp parser.tab.hpp lex.yy.cpp ast.cpp ast.h
+	$(CXX) $(CXXFLAGS) $(INCLUDES) -o parser parser.tab.cpp lex.yy.cpp ast.cpp -lfl
 
-lexer: lexer.l
-	$(LEX) -o lex.yy.cpp lexer.l
+parser.tab.cpp parser.tab.hpp: parser-with-ast.y
+	$(YACC) -d -o parser.tab.cpp parser-with-ast.y
 
-all: lexer parser
+lex.yy.cpp: lexer-with-ast.l parser.tab.hpp
+	$(LEX) -o lex.yy.cpp lexer-with-ast.l
 
 clean:
-	rm -f parser parser.tab.* parser.tab.h lex.yy.c*
-
-test:
-	./parser < test.txt
-
-parser_clean:
-	rm -f parser.tab.*
-	rm parser
-
-lexer_clean:
-	rm -f lexer.yy.*
-
-test_succ:
-	@for file in $$(find tests/success -type f | sort); do \
-		echo "Testing $$file..."; \
-		./parser < "$$file" \
-		echo "PASS: $$file"; \
-	done
-	@echo "Parsing completed."
-
-test_fail:
-	@for file in $$(find tests/fail -type f | sort); do \
-		echo "Testing $$file..."; \
-		./parser < "$$file" \
-		echo "PASS: $$file"; \
-	done
-	@echo "Parsing completed."
+	rm -f parser parser.tab.cpp parser.tab.hpp lex.yy.cpp ast_output.dot ast_tree.png
