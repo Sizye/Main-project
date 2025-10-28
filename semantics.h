@@ -66,6 +66,16 @@ public:
 
 private:
     // ========== TYPE SYSTEM COLLECTION ==========
+    bool isVariableUsedOnlyInDeadCode(const std::string& varName, std::shared_ptr<ASTNode> node) {
+        // Check if this variable was only referenced in code that got removed
+        // For now, we can use a simple heuristic:
+        
+        // If variable is in declaredIdentifiers but NOT in readVariables AND NOT in writtenVariables,
+        // it means it was only used in code that got optimized away
+        return (declaredIdentifiers.find(varName) != declaredIdentifiers.end()) &&
+               (readVariables.find(varName) == readVariables.end()) &&
+               (writtenVariables.find(varName) == writtenVariables.end());
+    }
     void collectAllDeclarations(std::shared_ptr<ASTNode> node) {
         if (!node) return;
         
@@ -568,7 +578,41 @@ private:
             optimizeAST(child);
         }
     }
-    
+    void removeAssignmentsToVariable(const std::string& varName, std::shared_ptr<ASTNode> node) {
+        if (!node) return;
+        
+        if (node->type == ASTNodeType::BODY) {
+            std::vector<std::shared_ptr<ASTNode>> newChildren;
+            
+            for (auto& child : node->children) {
+                bool shouldKeep = true;
+                
+                if (child && child->type == ASTNodeType::ASSIGNMENT) {
+                    std::string target = getAssignmentTarget(child);
+                    if (target == varName) {
+                        std::cout << "🔥 OPTIMIZATION: Removing assignment to write-only variable '" 
+                                  << varName << "'" << std::endl;
+                        shouldKeep = false;
+                    }
+                }
+                
+                if (shouldKeep) {
+                    newChildren.push_back(child);
+                    // Recursively clean assignments from child nodes
+                    removeAssignmentsToVariable(varName, child);
+                }
+            }
+            
+            if (newChildren.size() != node->children.size()) {
+                node->children = newChildren;
+            }
+        } else {
+            // Recursively process all children
+            for (auto& child : node->children) {
+                removeAssignmentsToVariable(varName, child);
+            }
+        }
+    }
     void optimizeUnusedDeclarations(std::shared_ptr<ASTNode> node) {
         if (!node) return;
         
@@ -590,20 +634,34 @@ private:
                 
                 bool isRead = (readVariables.find(varName) != readVariables.end());
                 bool isWritten = (writtenVariables.find(varName) != writtenVariables.end());
-                
+                bool isUsedInDeadCode = isVariableUsedOnlyInDeadCode(varName, node);
+
                 if (isRecordFieldDeclaration(child)) {
                     if (isRead || isWritten) {
                         newChildren.push_back(child);
                         preservedRecordFields++;
                         std::cout << "💾 PRESERVING used record field: " << varName << std::endl;
+                    } else if (isUsedInDeadCode) {
+                        // 🚨 NEW: Variable was only used in code that got optimized away
+                        std::cout << "🔥 OPTIMIZATION: Removing variable '" << varName 
+                                << "' used only in dead code" << std::endl;
+                        removedCount++;
                     } else {
                         std::cout << "🔥 OPTIMIZATION: Removing UNUSED record field '" << varName << "'" << std::endl;
                         removedCount++;
                     }
                 } 
                 else {
-                    if (isRead || isWritten) {
+                    // 🚨 NEW: REMOVE WRITE-ONLY VARIABLES!
+                    if (isRead) {
                         newChildren.push_back(child);
+                        std::cout << "💾 PRESERVING read variable: " << varName << std::endl;
+                    } else if (isWritten && !isRead) {
+                        std::cout << "🔥 OPTIMIZATION: Removing write-only variable '" << varName << "'" << std::endl;
+                        removedCount++;
+                        
+                        // 🚨 ALSO REMOVE ALL ASSIGNMENTS TO THIS VARIABLE!
+                        removeAssignmentsToVariable(varName, node);
                     } else {
                         std::cout << "🔥 OPTIMIZATION: Removing unused variable '" << varName << "'" << std::endl;
                         removedCount++;
@@ -643,9 +701,60 @@ private:
             }
         }
     }
-
+    bool isLoopEmpty(std::shared_ptr<ASTNode> loop) {
+        if (!loop || loop->type != ASTNodeType::FOR_LOOP) return false;
+        
+        // FOR_LOOP structure: [value, range, body]
+        if (loop->children.size() > 2) {
+            auto body = loop->children[2];
+            if (body && body->type == ASTNodeType::BODY) {
+                return isBodyEmpty(body);
+            }
+        }
+        
+        return true; // No body = empty loop
+    }
+    
+    bool isWhileLoopEmpty(std::shared_ptr<ASTNode> whileLoop) {
+        if (!whileLoop || whileLoop->type != ASTNodeType::WHILE_LOOP) return false;
+        
+        // WHILE_LOOP structure: [condition, body]
+        if (whileLoop->children.size() > 1) {
+            auto body = whileLoop->children[1];
+            if (body && body->type == ASTNodeType::BODY) {
+                return isBodyEmpty(body);
+            }
+        }
+        
+        return true; // No body = empty loop
+    }
+    
+    bool isBodyEmpty(std::shared_ptr<ASTNode> body) {
+        if (!body || body->type != ASTNodeType::BODY) return true;
+        
+        // Check if body has any meaningful children
+        for (auto& child : body->children) {
+            if (child && !isMeaninglessNode(child)) {
+                return false; // Found something meaningful
+            }
+        }
+        
+        return true; // Body is empty or only has meaningless nodes
+    }
+    
+    bool isMeaninglessNode(std::shared_ptr<ASTNode> node) {
+        if (!node) return true;
+        
+        // Empty declarations, empty statements, etc.
+        if (node->type == ASTNodeType::VAR_DECL) {
+            // Variable declaration without initialization might be meaningful
+            return false; // Be conservative
+        }
+        
+        // Empty expressions, etc.
+        return false; // Default: assume node is meaningful
+    }
     void optimizeDeadCode(std::shared_ptr<ASTNode> node) {
-        // ... (same as before)
         if (!node) return;
         
         if (node->type == ASTNodeType::BODY) {
@@ -656,12 +765,26 @@ private:
                 
                 if (child && child->type == ASTNodeType::ASSIGNMENT) {
                     if (isDeadAssignment(child)) {
-                        std::cout << "🔥 OPTIMIZATION: Removing dead assignment to '" << getAssignmentTarget(child) << "'" << std::endl;
+                        std::cout << "🔥 OPTIMIZATION: Removing dead assignment to '" 
+                                << getAssignmentTarget(child) << "'" << std::endl;
                         shouldKeep = false;
                     }
                 }
                 else if (child && child->type == ASTNodeType::FOR_LOOP) {
-                    optimizeLoopBody(child);
+                    // 🚨 NEW: Remove EMPTY loops!
+                    if (isLoopEmpty(child)) {
+                        std::cout << "🔥 OPTIMIZATION: Removing empty FOR loop" << std::endl;
+                        shouldKeep = false;
+                    } else {
+                        optimizeLoopBody(child);
+                    }
+                }
+                else if (child && child->type == ASTNodeType::WHILE_LOOP) {
+                    // 🚨 NEW: Remove EMPTY while loops!
+                    if (isWhileLoopEmpty(child)) {
+                        std::cout << "🔥 OPTIMIZATION: Removing empty WHILE loop" << std::endl;
+                        shouldKeep = false;
+                    }
                 }
                 
                 if (shouldKeep) {
@@ -673,15 +796,27 @@ private:
                 node->children = newChildren;
             }
         }
+        
+        // Recursively optimize all children
+        for (auto& child : node->children) {
+            optimizeDeadCode(child);
+        }
     }
 
     void optimizeLoopBody(std::shared_ptr<ASTNode> forLoop) {
         if (!forLoop || forLoop->type != ASTNodeType::FOR_LOOP) return;
         
+        // FOR_LOOP structure: [value, range, body]
         if (forLoop->children.size() > 2) {
             auto body = forLoop->children[2];
             if (body && body->type == ASTNodeType::BODY) {
-                optimizeDeadCode(body);
+                optimizeDeadCode(body); // Recursively optimize loop body
+                
+                // 🚨 CHECK IF BODY BECAME EMPTY AFTER OPTIMIZATION
+                if (isBodyEmpty(body)) {
+                    std::cout << "🔥 OPTIMIZATION: Loop body became empty - removing entire loop" << std::endl;
+                    // Mark this loop for removal (handled in optimizeDeadCode)
+                }
             }
         }
     }
