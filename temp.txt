@@ -11,13 +11,15 @@ type Person is record
 end;
 
 routine initializeSystem() is
+    var unused1: integer;
+    var unused2: real;
     var simple_check : array[102] integer;
     simple_check[100] := 23;
 
     var var_check : integer;
     var_check := 10;
     simple_check[var_check] := 234;
-    
+
     var i : integer;
     var j : integer;
     var k : integer;
@@ -27,7 +29,12 @@ routine initializeSystem() is
         people[i].height := 1.5 + (i % 10) * 0.1;
         people[i].isStudent := (i % 3) = 0;
     end
-    
+    if people[0].height < 32 then
+        return 1;
+    else
+        return 0;
+    end
+
     for i in 1..5 loop
         for j in 1..3 loop
             for k in 1..3 loop
