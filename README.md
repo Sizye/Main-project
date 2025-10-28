@@ -4,7 +4,7 @@
 - Flex
 - Bison
 
-### To compile parser & lexer
-    > make all 
-### To parse something into AST
-    >  ./parser < [your_program].txt  > [output].txt 
+### To compile parser & lexer & semantics
+    > make
+### To check array bounds check
+    >  ./parser temp.txt
