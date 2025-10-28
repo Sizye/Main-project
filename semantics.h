@@ -1,3 +1,4 @@
+
 #ifndef SEMANTICS_H
 #define SEMANTICS_H
 
@@ -10,6 +11,9 @@
 class SemanticAnalyzer {
 private:
     std::unordered_map<std::string, int> arraySizes;
+    std::unordered_map<std::string, int> variableValues;
+    std::unordered_map<std::string, bool> variableKnown;
+    std::unordered_map<std::string, std::pair<int, int>> variableRanges;
     std::vector<std::string> errors;
     std::vector<std::string> warnings;
 
@@ -22,10 +26,7 @@ public:
             return false;
         }
         
-        // First pass: collect array declarations
         collectArrayDeclarations(ast);
-        
-        // Second pass: check array bounds and other semantics
         return checkSemantics(ast);
     }
 
@@ -33,7 +34,6 @@ private:
     void collectArrayDeclarations(std::shared_ptr<ASTNode> node) {
         if (!node) return;
         
-        // Look for array variable declarations
         if (node->type == ASTNodeType::VAR_DECL) {
             std::string varName = node->value;
             
@@ -57,7 +57,6 @@ private:
             }
         }
         
-        // Recursively process children
         for (auto& child : node->children) {
             collectArrayDeclarations(child);
         }
@@ -68,7 +67,14 @@ private:
         
         bool success = true;
         
-        // SPECIAL CASE: Check array accesses when we find them
+        if (node->type == ASTNodeType::ASSIGNMENT) {
+            trackVariableAssignment(node);
+        }
+        
+        if (node->type == ASTNodeType::FOR_LOOP) {
+            trackForLoopRange(node);
+        }
+        
         if (node->type == ASTNodeType::ARRAY_ACCESS) {
             std::cout << "=== CHECKING ARRAY BOUNDS ===" << std::endl;
             if (!checkArrayBounds(node)) {
@@ -76,14 +82,104 @@ private:
             }
         }
         
-        // ALWAYS recursively check all children
         for (auto& child : node->children) {
             if (!checkSemantics(child)) {
                 success = false;
             }
         }
         
+        if (node->type == ASTNodeType::FOR_LOOP) {
+            cleanupLoopVariable(node);
+        }
+        
         return success;
+    }
+
+    void trackForLoopRange(std::shared_ptr<ASTNode> forLoop) {
+        if (!forLoop || forLoop->children.size() < 1) {
+            std::cout << "DEBUG: ForLoop node has insufficient children: " 
+                      << (forLoop ? forLoop->children.size() : 0) << std::endl;
+            return;
+        }
+        
+        std::string loopVar = forLoop->value;
+        std::cout << "DEBUG: Processing ForLoop with variable: " << loopVar << std::endl;
+        std::cout << "DEBUG: ForLoop children count: " << forLoop->children.size() << std::endl;
+        
+        // The range should be the first child
+        auto rangeNode = forLoop->children[0];
+        
+        if (!rangeNode) {
+            std::cout << "DEBUG: Range node is null" << std::endl;
+            return;
+        }
+        
+        std::cout << "DEBUG: Range node type: " << static_cast<int>(rangeNode->type) 
+                  << " (expected: " << static_cast<int>(ASTNodeType::RANGE) << ")" << std::endl;
+        
+        if (rangeNode->type == ASTNodeType::RANGE) {
+            if (rangeNode->children.size() >= 2) {
+                auto startNode = rangeNode->children[0];
+                auto endNode = rangeNode->children[1];
+                
+                std::cout << "DEBUG: Start node type: " << (startNode ? static_cast<int>(startNode->type) : -1) << std::endl;
+                std::cout << "DEBUG: End node type: " << (endNode ? static_cast<int>(endNode->type) : -1) << std::endl;
+                
+                if (startNode && startNode->type == ASTNodeType::LITERAL_INT &&
+                    endNode && endNode->type == ASTNodeType::LITERAL_INT) {
+                    
+                    try {
+                        int start = std::stoi(startNode->value);
+                        int end = std::stoi(endNode->value);
+                        
+                        variableRanges[loopVar] = {start, end};
+                        std::cout << "🎯 LOOP RANGE TRACKED: " << loopVar << " in [" 
+                                  << start << ".." << end << "]" << std::endl;
+                        
+                    } catch (...) {
+                        warning("Could not parse loop range for '" + loopVar + "'");
+                    }
+                } else {
+                    std::cout << "DEBUG: Range bounds are not literal integers" << std::endl;
+                }
+            } else {
+                std::cout << "DEBUG: Range node has insufficient children: " 
+                          << rangeNode->children.size() << std::endl;
+            }
+        } else {
+            std::cout << "DEBUG: First child is not a RANGE node" << std::endl;
+        }
+    }
+
+    void cleanupLoopVariable(std::shared_ptr<ASTNode> forLoop) {
+        std::string loopVar = forLoop->value;
+        variableRanges.erase(loopVar);
+        std::cout << "DEBUG: Cleaned up loop variable: " << loopVar << std::endl;
+    }
+
+    void trackVariableAssignment(std::shared_ptr<ASTNode> assignment) {
+        if (!assignment || assignment->children.size() < 2) return;
+        
+        auto left = assignment->children[0];
+        auto right = assignment->children[1];
+        
+        if (left && left->type == ASTNodeType::IDENTIFIER && right) {
+            std::string varName = left->value;
+            
+            if (right->type == ASTNodeType::LITERAL_INT) {
+                try {
+                    int value = std::stoi(right->value);
+                    variableValues[varName] = value;
+                    variableKnown[varName] = true;
+                    std::cout << "TRACKING: " << varName << " = " << value << std::endl;
+                } catch (...) {
+                    variableKnown[varName] = false;
+                }
+            } else {
+                variableKnown[varName] = false;
+                std::cout << "UNKNOWN VALUE: " << varName << " (complex expression)" << std::endl;
+            }
+        }
     }
 
     bool checkArrayBounds(std::shared_ptr<ASTNode> arrayAccess) {
@@ -118,9 +214,55 @@ private:
                             std::cout << "✓ Array bound check PASSED\n";
                             return true;
                         }
-                    } else {
-                        warning("Dynamic index for array '" + arrayName + 
-                               "' - cannot verify bounds at compile time");
+                    }
+                    else if (index && index->type == ASTNodeType::IDENTIFIER) {
+                        std::string indexVar = index->value;
+                        
+                        if (variableKnown[indexVar]) {
+                            int idx = variableValues[indexVar];
+                            std::cout << "Variable index check: " << indexVar << " = " << idx
+                                      << " for array '" << arrayName 
+                                      << "' of size " << arraySize << "\n";
+                            
+                            if (idx < 0 || idx >= arraySize) {
+                                error("Array index " + std::to_string(idx) + 
+                                      " (variable '" + indexVar + "') out of bounds for array '" + 
+                                      arrayName + "' of size " + std::to_string(arraySize));
+                                return false;
+                            } else {
+                                std::cout << "✓ Variable array bound check PASSED\n";
+                                return true;
+                            }
+                        }
+                        else if (variableRanges.find(indexVar) != variableRanges.end()) {
+                            auto range = variableRanges[indexVar];
+                            int start = range.first;
+                            int end = range.second;
+                            
+                            std::cout << "🔥 LOOP VARIABLE CHECK: " << indexVar 
+                                      << " in [" << start << ".." << end << "]"
+                                      << " for array '" << arrayName 
+                                      << "' of size " << arraySize << "\n";
+                            
+                            if (start < 0 || end >= arraySize) {
+                                error("Loop variable '" + indexVar + "' range [" + 
+                                      std::to_string(start) + ".." + std::to_string(end) + 
+                                      "] out of bounds for array '" + arrayName + 
+                                      "' of size " + std::to_string(arraySize));
+                                return false;
+                            } else {
+                                std::cout << "🎯 LOOP RANGE CHECK PASSED - ALL INDICES SAFE!\n";
+                                return true;
+                            }
+                        }
+                        else {
+                            warning("Unknown index value for variable '" + indexVar + 
+                                   "' - cannot verify bounds at compile time");
+                            return true;
+                        }
+                    }
+                    else {
+                        warning("Complex index expression - cannot verify bounds at compile time");
                         return true;
                     }
                 } else {

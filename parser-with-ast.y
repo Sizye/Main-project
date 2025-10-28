@@ -1,5 +1,6 @@
 %code requires {
     #include <memory>
+    #include <fstream>
     class ASTNode;
 }
 %{
@@ -10,6 +11,7 @@
 #include <string>
 #include <memory>
 #include <iostream>
+#include <fstream>
 #include "ast.h"
 
 int yylex();

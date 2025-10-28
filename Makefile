@@ -1,25 +1,79 @@
-# Test targets
-test1: $(TARGET)
-	./$(TARGET) test1.txt
+CXX = g++
+LEX = flex
+YACC = bison
+CXXFLAGS = -std=c++11 -Wall -Wextra -g
+INCLUDES = -I.
+LDFLAGS = -lfl
 
-test2: $(TARGET) 
-	./$(TARGET) test2.txt
+# Source files
+YACC_SRC = parser-with-ast.y
+LEX_SRC = lexer-with-ast.l
+AST_SRC = ast.cpp ast.h
+SEMANTICS_SRC = semantics.h
 
-test3: $(TARGET)
-	./$(TARGET) test3.txt
+# Generated files
+YACC_OUT = parser.tab.cpp
+YACC_HEADER = parser.tab.hpp
+LEX_OUT = lex.yy.cpp
 
-# Create test files
-create-tests:
-	echo "var arr: array[10] integer; routine main() is arr[5] := 42; end" > test1.txt
-	echo "var arr: array[5] integer; routine main() is arr[10] := 20; end" > test2.txt
-	echo "var data: array[8] integer; var index: integer; routine process() is data[15] := 77; end" > test3.txt
+# Targets
+TARGET = parser
 
-# Run all tests
-test-all: create-tests test1 test2 test3
+.PHONY: all clean test manual demo
 
-# Visualize AST
-visualize-test: $(TARGET)
-	./$(TARGET) test1.txt
-	@if [ -f test1.txt.dot ]; then \
-		dot -Tpng test1.txt.dot -o test1_ast.png && echo "AST visualization: test1_ast.png"; \
+all: $(TARGET)
+
+# Build parser from YACC file (now contains main)
+$(TARGET): $(YACC_OUT) $(LEX_OUT) $(AST_SRC) $(SEMANTICS_SRC)
+	$(CXX) $(CXXFLAGS) $(INCLUDES) -o $(TARGET) $(YACC_OUT) $(LEX_OUT) ast.cpp $(LDFLAGS)
+
+$(YACC_OUT) $(YACC_HEADER): $(YACC_SRC)
+	$(YACC) -d -o $(YACC_OUT) $(YACC_SRC)
+
+$(LEX_OUT): $(LEX_SRC) $(YACC_HEADER)
+	$(LEX) -o $(LEX_OUT) $(LEX_SRC)
+
+# Test with file input
+test: $(TARGET)
+	@if [ -f test_program.txt ]; then \
+		echo "=== TESTING WITH FILE INPUT ==="; \
+		./$(TARGET) test_program.txt; \
+	else \
+		echo "Test file test_program.txt not found. Creating example..."; \
+		echo 'var arr: array[10] integer; arr[5] := 42;' > test_program.txt; \
+		echo "=== TESTING WITH FILE INPUT ==="; \
+		./$(TARGET) test_program.txt; \
 	fi
+
+# Interactive mode
+manual: $(TARGET)
+	@echo "=== INTERACTIVE MODE ==="
+	@echo "Enter your program (Ctrl+D to finish):"
+	@./$(TARGET)
+
+# Demo with predefined input
+demo: $(TARGET)
+	@echo "=== DEMO MODE ==="
+	@echo "var arr: array[10] integer; arr[15] := 100;" | ./$(TARGET) || true
+
+# Generate AST visualization
+visualize: $(TARGET)
+	@echo "=== GENERATING AST VISUALIZATION ==="
+	@if [ -f test_program.txt ]; then \
+		./$(TARGET) test_program.txt 2>/dev/null | grep -A 100 "AST VISUALIZATION" > ast_output.dot; \
+		if [ -f ast_output.dot ]; then \
+			dot -Tpng ast_output.dot -o ast_tree.png 2>/dev/null && echo "AST visualization saved as ast_tree.png"; \
+		else \
+			echo "No DOT output generated"; \
+		fi \
+	else \
+		echo "Create test_program.txt first"; \
+	fi
+
+clean:
+	rm -f $(TARGET) $(YACC_OUT) $(YACC_HEADER) $(LEX_OUT)
+	rm -f ast_output.dot ast_tree.png test_program.txt
+	rm -f *.o
+
+# Quick rebuild
+rebuild: clean all
