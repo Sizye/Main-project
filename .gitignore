@@ -19,3 +19,9 @@ lex.yy*
 
 # Parser generated files
 parser.tab.*
+
+# Vscode config
+.vscode
+
+# Test results
+output.txt

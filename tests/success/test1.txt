@@ -20,4 +20,4 @@ type Point is record
     var x : integer;
     var y : integer;
 end;
-var myPoints: array[10] Point; 
+var myPoints: array[10] Point;

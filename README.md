@@ -6,7 +6,5 @@
 
 ### To compile parser & lexer
     > make all 
-### To run correct syntax tests (for parser)
-    > make test_succ
-### To run failing parser tests
-    > make test_fail
+### To parse something into AST
+    >  ./parser < [your_program].txt  > [output].txt 
