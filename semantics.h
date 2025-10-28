@@ -581,7 +581,7 @@ private:
         if (node->type == ASTNodeType::BODY || node->type == ASTNodeType::PROGRAM) {
             optimizeUnusedDeclarations(node);
         }
-        
+        optimizeDeadCode(node);
         for (auto& child : node->children) {
             optimizeAST(child);
         }
@@ -593,6 +593,14 @@ private:
         std::vector<std::shared_ptr<ASTNode>> newChildren;
         int removedCount = 0;
         int preservedRecordFields = 0;
+        
+        std::cout << "=== BEFORE OPTIMIZATION ===" << std::endl;
+        std::cout << "Node children count: " << node->children.size() << std::endl;
+        for (auto& child : node->children) {
+            if (child && child->type == ASTNodeType::VAR_DECL) {
+                std::cout << "  Child: " << child->value << std::endl;
+            }
+        }
         
         for (auto& child : node->children) {
             if (child && child->type == ASTNodeType::VAR_DECL) {
@@ -631,12 +639,89 @@ private:
         if (removedCount > 0) {
             node->children = newChildren;
             std::cout << "🔥 Removed " << removedCount << " unused declaration(s)" << std::endl;
+            
+            std::cout << "=== AFTER OPTIMIZATION ===" << std::endl;
+            std::cout << "Node children count: " << node->children.size() << std::endl;
+            for (auto& child : node->children) {
+                if (child && child->type == ASTNodeType::VAR_DECL) {
+                    std::cout << "  Remaining child: " << child->value << std::endl;
+                }
+            }
+            
             if (preservedRecordFields > 0) {
                 std::cout << "💾 Preserved " << preservedRecordFields << " used record field(s)" << std::endl;
             }
         }
     }
-    
+
+    void optimizeDeadCode(std::shared_ptr<ASTNode> node) {
+        if (!node) return;
+        
+        if (node->type == ASTNodeType::BODY) {
+            std::vector<std::shared_ptr<ASTNode>> newChildren;
+            
+            for (auto& child : node->children) {
+                bool shouldKeep = true;
+                
+                if (child && child->type == ASTNodeType::ASSIGNMENT) {
+                    if (isDeadAssignment(child)) {
+                        std::cout << "🔥 OPTIMIZATION: Removing dead assignment to '" << getAssignmentTarget(child) << "'" << std::endl;
+                        shouldKeep = false;
+                    }
+                }
+                else if (child && child->type == ASTNodeType::FOR_LOOP) {
+                    // Check if loop body has any meaningful code
+                    optimizeLoopBody(child);
+                }
+                
+                if (shouldKeep) {
+                    newChildren.push_back(child);
+                }
+            }
+            
+            if (newChildren.size() != node->children.size()) {
+                node->children = newChildren;
+            }
+        }
+    }
+
+    void optimizeLoopBody(std::shared_ptr<ASTNode> forLoop) {
+        if (!forLoop || forLoop->type != ASTNodeType::FOR_LOOP) return;
+        
+        // FOR_LOOP structure: [value, range, body]
+        if (forLoop->children.size() > 2) {
+            auto body = forLoop->children[2];
+            if (body && body->type == ASTNodeType::BODY) {
+                optimizeDeadCode(body); // Recursively optimize loop body
+            }
+        }
+    }
+
+    // Helper: Check if assignment is dead (target variable is unused)
+    bool isDeadAssignment(std::shared_ptr<ASTNode> assignment) {
+        if (!assignment || assignment->type != ASTNodeType::ASSIGNMENT) return false;
+        
+        std::string target = getAssignmentTarget(assignment);
+        if (target.empty()) return false;
+        
+        // If target variable is NOT read anywhere, this assignment is dead
+        return (readVariables.find(target) == readVariables.end());
+    }
+
+    // Helper: Get the variable being assigned to
+    std::string getAssignmentTarget(std::shared_ptr<ASTNode> assignment) {
+        if (!assignment || assignment->children.empty()) return "";
+        
+        auto target = assignment->children[0];
+        if (!target) return "";
+        
+        if (target->type == ASTNodeType::IDENTIFIER) {
+            return target->value;
+        }
+        // Could handle array accesses and member accesses here too
+        
+        return "";
+    }
     void reportOptimizations() {
         std::cout << "\n=== OPTIMIZATION REPORT ===" << std::endl;
         

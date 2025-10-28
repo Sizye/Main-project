@@ -3,21 +3,30 @@ var A: Matrix;
 var B: Matrix;
 var C: Matrix;
 
-routine uselessComputation() is
+routine uselessComputation() : real is
     var i: integer;
     var j: integer;
     var temp: real;
     
-    for i in 0..999 loop
-        for j in 0..999 loop
+    for i in 1..999 loop
+        for j in 1..999 loop
             temp := A[i] * B[j];
         end
     end
     
 
-    for i in 0..999 loop
+    for i in 1..999 loop
         C[i] := i * 2.0;
     end
     
-    print A[0];
+    print A[1];
+end
+
+
+routine processPerson(p : Person) : boolean is
+    var result : real;
+    result := uselessComputation();
+    if result > 0 then
+        result := 3;
+    end
 end
