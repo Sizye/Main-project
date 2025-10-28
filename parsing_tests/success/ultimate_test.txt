@@ -2,9 +2,6 @@ type IntAlias is integer;
 type RealAlias is real;
 type BoolAlias is boolean;
 
-type Vector is array[3] real;
-type Matrix is array[3] Vector;
-
 type Person is record
     var id : integer;
     var name : array[50] integer;
@@ -28,7 +25,6 @@ var pi : real is 3.14159;
 var systemActive : boolean is true;
 
 var people : array[100] Person;
-var matrices : array[5] Matrix;
 var corp : Company;
 
 routine processPerson(p : Person) : boolean;
@@ -121,14 +117,6 @@ routine initializeSystem() is
         people[i].id := 1000 + i;
         people[i].height := 1.5 + (i % 10) * 0.1;
         people[i].isStudent := (i % 3) = 0;
-    end
-    
-    for i in 1..5 loop
-        for j in 1..3 loop
-            for k in 1..3 loop
-                matrices[i][j][k] := (i * j * k) * 0.1;
-            end
-        end
     end
     
     corp.ceo.id := 1;
