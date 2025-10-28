@@ -1,19 +1,25 @@
-CXX = g++
-LEX = flex
-YACC = bison
-CXXFLAGS = -std=c++11 -Wall -Wextra -g
-INCLUDES = -I.
+# Test targets
+test1: $(TARGET)
+	./$(TARGET) test1.txt
 
-all: parser
+test2: $(TARGET) 
+	./$(TARGET) test2.txt
 
-parser: parser.tab.cpp parser.tab.hpp lex.yy.cpp ast.cpp ast.h
-	$(CXX) $(CXXFLAGS) $(INCLUDES) -o parser parser.tab.cpp lex.yy.cpp ast.cpp -lfl
+test3: $(TARGET)
+	./$(TARGET) test3.txt
 
-parser.tab.cpp parser.tab.hpp: parser-with-ast.y
-	$(YACC) -d -o parser.tab.cpp parser-with-ast.y
+# Create test files
+create-tests:
+	echo "var arr: array[10] integer; routine main() is arr[5] := 42; end" > test1.txt
+	echo "var arr: array[5] integer; routine main() is arr[10] := 20; end" > test2.txt
+	echo "var data: array[8] integer; var index: integer; routine process() is data[15] := 77; end" > test3.txt
 
-lex.yy.cpp: lexer-with-ast.l parser.tab.hpp
-	$(LEX) -o lex.yy.cpp lexer-with-ast.l
+# Run all tests
+test-all: create-tests test1 test2 test3
 
-clean:
-	rm -f parser parser.tab.cpp parser.tab.hpp lex.yy.cpp ast_output.dot ast_tree.png
+# Visualize AST
+visualize-test: $(TARGET)
+	./$(TARGET) test1.txt
+	@if [ -f test1.txt.dot ]; then \
+		dot -Tpng test1.txt.dot -o test1_ast.png && echo "AST visualization: test1_ast.png"; \
+	fi

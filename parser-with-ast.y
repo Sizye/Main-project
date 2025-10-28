@@ -17,6 +17,8 @@ int yylex();
 extern int yylineno;
 extern char* yytext;
 void yyerror(const char *s);
+int runParser();
+extern FILE* yyin;
 
 int debug_enabled = 1;
 int ast_debug = 1;
@@ -927,30 +929,109 @@ ReturnStatement:
 
 %%
 
-int main() {
-    printf("=== КОМПИЛЯТОР ИМПЕРАТИВНОГО ЯЗЫКА С AST ===\n");
-    printf("Разбор с подробной отладкой и построением AST\n");
-    printf("Установите debug_enabled=0 для отключения отладки парсера\n");
-    printf("Установите ast_debug=0 для отключения отладки AST\n\n");
+#include "semantics.h"
+
+int main(int argc, char* argv[]) {
+    printf("=== IMPERATIVE LANGUAGE COMPILER WITH SEMANTIC ANALYSIS ===\n");
     
-    int result = yyparse();
-    
-    if (result == 0) {
-        printf("\n=== РАЗБОР УСПЕШЕН! ===\n");
-        if (astRoot) {
-            printf("\n=== СИНТАКСИЧЕСКОЕ ДЕРЕВО (AST) ===\n");
-            astRoot->print();
-            printf("\n=== ДЕРЕВО В ФОРМАТЕ DOT (для Graphviz) ===\n");
-            std::cout << astRoot->toDot() << std::endl;
+    if (argc > 1) {
+        // File input mode
+        std::string filename = argv[1];
+        printf("Processing file: %s\n", filename.c_str());
+        
+        FILE* file = fopen(filename.c_str(), "r");
+        if (!file) {
+            fprintf(stderr, "Error: Cannot open file %s\n", filename.c_str());
+            return 1;
+        }
+        
+        yyin = file;
+        int result = yyparse();
+        fclose(file);
+        
+        if (result == 0) {
+            printf("\n=== PARSER SUCCESSFUL! ===\n");
+            
+            if (astRoot) {
+                printf("\n=== RUNNING SEMANTIC ANALYSIS ===\n");
+                SemanticAnalyzer analyzer;
+                bool semanticSuccess = analyzer.analyze(astRoot);
+                
+                printf("\n=== FINAL RESULT ===\n");
+                if (semanticSuccess) {
+                    printf("✓ COMPILATION SUCCESSFUL - NO ERRORS FOUND\n");
+                    
+                    // Print the AST
+                    printf("\n=== ABSTRACT SYNTAX TREE ===\n");
+                    astRoot->print();
+                    
+                    // Generate DOT visualization to file
+                    std::string dotFilename = filename + ".dot";
+                    std::string pngFilename = filename + ".png";
+                    
+                    std::ofstream dotFile(dotFilename);
+                    if (dotFile) {
+                        dotFile << astRoot->toDot();
+                        dotFile.close();
+                        printf("\n=== AST VISUALIZATION ===\n");
+                        printf("DOT file: %s\n", dotFilename.c_str());
+                        
+                        // Try to generate PNG if Graphviz is installed
+                        std::string command = "dot -Tpng " + dotFilename + " -o " + pngFilename + " 2>/dev/null";
+                        if (system(command.c_str()) == 0) {
+                            printf("PNG visualization: %s\n", pngFilename.c_str());
+                        } else {
+                            printf("Install Graphviz (dot) for PNG visualization\n");
+                        }
+                    }
+                } else {
+                    printf("✗ COMPILATION FAILED - SEMANTIC ERRORS DETECTED\n");
+                    return 1;
+                }
+            } else {
+                printf("No AST root created.\n");
+                return 1;
+            }
         } else {
-            printf("Корень AST не создан.\n");
+            printf("\n=== PARSER FAILED ===\n");
+            return 1;
         }
     } else {
-        printf("\n=== РАЗБОР НЕУДАЧЕН ===\n");
+        // Interactive mode
+        printf("Usage: %s <filename>\n", argv[0]);
+        printf("Example: %s my_program.txt\n", argv[0]);
+        printf("\nOr provide input file:\n");
+        printf("No input file provided. Running in interactive mode...\n");
+        printf("Enter your program (Ctrl+D to finish):\n");
+        
+        int result = yyparse();
+        
+        if (result == 0 && astRoot) {
+            printf("\n=== PARSER SUCCESSFUL! ===\n");
+            
+            printf("\n=== RUNNING SEMANTIC ANALYSIS ===\n");
+            SemanticAnalyzer analyzer;
+            bool semanticSuccess = analyzer.analyze(astRoot);
+            
+            printf("\n=== FINAL RESULT ===\n");
+            if (semanticSuccess) {
+                printf("✓ COMPILATION SUCCESSFUL - NO ERRORS FOUND\n");
+                
+                printf("\n=== ABSTRACT SYNTAX TREE ===\n");
+                astRoot->print();
+            } else {
+                printf("✗ COMPILATION FAILED - SEMANTIC ERRORS DETECTED\n");
+                return 1;
+            }
+        } else {
+            printf("\n=== PARSER FAILED ===\n");
+            return 1;
+        }
     }
     
-    return result;
+    return 0;
 }
+
 
 void yyerror(const char* s) {
     print_context(s);
