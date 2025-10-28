@@ -1,0 +1,18 @@
+routine calculateStats(data : array[] real, count : integer) : real is
+    var sum : real is 0.0;
+    var avg : real;
+    var i : integer;
+    
+    if count <= 0 then
+        return 0.0;
+    end
+    
+    for i in 1..size(data) loop
+        if i <= count then
+            sum := sum + data[i];
+        end
+    end
+    
+    avg := sum / count;
+    return avg;
+end

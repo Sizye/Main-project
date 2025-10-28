@@ -1,0 +1,27 @@
+type Person is record
+    var id: integer;
+    var name: array[50] integer; 
+    var age: integer;
+    var salary: real;
+    var isManager: boolean;
+end;
+
+var employees: array[1000] Person;
+
+routine optimizeHRSystem() is
+    var i: integer;
+    
+    for i in 0..999 loop
+        employees[i].id := i + 1000;
+        employees[i].isManager := (i % 10) = 0;
+    end
+    
+    for i in 0..999 loop
+        if employees[i].age > 65 then
+            print "Retirement eligible";
+        end
+    end
+    for i in 0..999 loop
+        employees[i].salary := employees[i].salary * 1.05;
+    end
+end

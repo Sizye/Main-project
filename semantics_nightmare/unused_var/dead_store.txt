@@ -1,0 +1,23 @@
+type Matrix is array[1000] real;
+var A: Matrix;
+var B: Matrix;
+var C: Matrix;
+
+routine uselessComputation() is
+    var i: integer;
+    var j: integer;
+    var temp: real;
+    
+    for i in 0..999 loop
+        for j in 0..999 loop
+            temp := A[i] * B[j];
+        end
+    end
+    
+
+    for i in 0..999 loop
+        C[i] := i * 2.0;
+    end
+    
+    print A[0];
+end

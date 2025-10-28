@@ -15,14 +15,15 @@ private:
     std::vector<std::string> errors;
     std::vector<std::string> warnings;
     
-    // UNIFIED usage tracking
-    std::set<std::string> usedIdentifiers;
+    // PRECISE usage tracking
     std::set<std::string> declaredIdentifiers;
+    std::set<std::string> writtenVariables;
+    std::set<std::string> readVariables;
     
     // Loop analysis
     std::map<std::string, std::pair<int, int>> loopVariableRanges;
     
-    // Type system - track type definitions
+    // Type system
     std::unordered_map<std::string, std::shared_ptr<ASTNode>> typeDefinitions;
 
 public:
@@ -37,16 +38,22 @@ public:
         // PASS 0: Collect type definitions FIRST
         collectTypeDefinitions(ast);
         
-        // PASS 1: Semantic checks with SMART analysis
+        // PASS 1: Collect ALL declarations (including parameters)
+        collectAllDeclarations(ast);
+        
+        // PASS 2: Semantic checks with SMART analysis  
         bool semanticSuccess = checkSemantics(ast);
         
-        // PASS 2: Collect COMPLETE usage data
+        // PASS 3: Collect COMPLETE usage data
         collectCompleteUsage(ast);
         
-        // PASS 3: Run SMART optimizations
+        // DEBUG: Show what we tracked
+        debugUsageTracking();
+        
+        // PASS 4: Run ADVANCED optimizations
         optimizeAST(ast);
         
-        // PASS 4: Report optimization results
+        // PASS 5: Report optimization results
         reportOptimizations();
         
         return semanticSuccess;
@@ -54,11 +61,46 @@ public:
 
 private:
     // ========== TYPE SYSTEM COLLECTION ==========
+
+    void collectAllDeclarations(std::shared_ptr<ASTNode> node) {
+        if (!node) return;
+        
+        switch (node->type) {
+            case ASTNodeType::VAR_DECL:
+                declaredIdentifiers.insert(node->value);
+                std::cout << "Found declaration: " << node->value << std::endl;
+                break;
+                
+            case ASTNodeType::PARAMETER:
+                declaredIdentifiers.insert(node->value);
+                std::cout << "Found parameter: " << node->value << std::endl;
+                
+                // Track sizeless array parameters
+                if (node->children.size() > 0 && node->children[0]) {
+                    auto typeNode = node->children[0];
+                    if (typeNode->type == ASTNodeType::ARRAY_TYPE) {
+                        if (typeNode->children.empty() || !typeNode->children[0]) {
+                            std::cout << "Found sizeless array parameter: " << node->value << std::endl;
+                        }
+                    }
+                }
+                break;
+                
+            case ASTNodeType::ROUTINE_DECL:
+            case ASTNodeType::ROUTINE_FORWARD_DECL:
+                declaredIdentifiers.insert(node->value);
+                std::cout << "Found routine: " << node->value << std::endl;
+                break;
+        }
+        
+        for (auto& child : node->children) {
+            collectAllDeclarations(child);
+        }
+    }
     
     void collectTypeDefinitions(std::shared_ptr<ASTNode> node) {
         if (!node) return;
         
-        // Collect type declarations
         if (node->type == ASTNodeType::TYPE_DECL) {
             std::string typeName = node->value;
             if (node->children.size() > 0 && node->children[0]) {
@@ -67,7 +109,6 @@ private:
             }
         }
         
-        // Recursively collect from children
         for (auto& child : node->children) {
             collectTypeDefinitions(child);
         }
@@ -76,7 +117,6 @@ private:
     int getArraySizeFromType(std::shared_ptr<ASTNode> typeNode) {
         if (!typeNode) return -1;
         
-        // Direct array type
         if (typeNode->type == ASTNodeType::ARRAY_TYPE) {
             if (typeNode->children.size() > 0 && typeNode->children[0]) {
                 auto sizeExpr = typeNode->children[0];
@@ -87,10 +127,9 @@ private:
                         return -1;
                     }
                 }
-            }
-            return -1; // Dynamic array size
+            } 
+            return -1;
         }
-        // User type (alias) - follow the alias
         else if (typeNode->type == ASTNodeType::USER_TYPE) {
             std::string typeName = typeNode->value;
             if (typeDefinitions.find(typeName) != typeDefinitions.end()) {
@@ -98,10 +137,10 @@ private:
             }
         }
         
-        return -1; // Not an array type or unknown
+        return -1;
     }
 
-    // ========== SMART SEMANTIC CHECKS ==========
+    // ========== PRECISE SEMANTIC CHECKS ==========
     
     bool checkSemantics(std::shared_ptr<ASTNode> node) {
         if (!node) return true;
@@ -118,27 +157,52 @@ private:
                 break;
                 
             case ASTNodeType::ARRAY_ACCESS:
-                success = checkArrayBoundsSmart(node);
+                success = checkMultiDimArrayBounds(node);
+                break;
+                
+            case ASTNodeType::ASSIGNMENT:
+                if (node->children.size() > 0 && node->children[0]) {
+                    trackVariableWrite(node->children[0]);
+                }
                 break;
                 
             default:
                 break;
         }
         
-        // Recursively check children
         for (auto& child : node->children) {
             if (!checkSemantics(child)) {
                 success = false;
             }
         }
         
-        // Clean up loop variables when exiting scope
         if (node->type == ASTNodeType::FOR_LOOP) {
             std::string loopVar = node->value;
             loopVariableRanges.erase(loopVar);
         }
         
         return success;
+    }
+
+    void trackVariableWrite(std::shared_ptr<ASTNode> leftSide) {
+        if (!leftSide) return;
+        
+        if (leftSide->type == ASTNodeType::IDENTIFIER) {
+            writtenVariables.insert(leftSide->value);
+            std::cout << "📝 TRACKED WRITE: " << leftSide->value << std::endl;
+        }
+        else if (leftSide->type == ASTNodeType::MEMBER_ACCESS) {
+            writtenVariables.insert(leftSide->value);
+            std::cout << "📝 TRACKED WRITE (field): " << leftSide->value << std::endl;
+            if (leftSide->children.size() > 0 && leftSide->children[0]) {
+                trackVariableWrite(leftSide->children[0]);
+            }
+        }
+        else if (leftSide->type == ASTNodeType::ARRAY_ACCESS) {
+            if (leftSide->children.size() > 0 && leftSide->children[0]) {
+                trackVariableWrite(leftSide->children[0]);
+            }
+        }
     }
 
     bool analyzeForLoop(std::shared_ptr<ASTNode> forLoop) {
@@ -170,80 +234,157 @@ private:
         return true;
     }
 
-    bool checkArrayBoundsSmart(std::shared_ptr<ASTNode> arrayAccess) {
+    // ========== MULTI-DIMENSIONAL ARRAY BOUNDS CHECKING ==========
+    
+    bool checkMultiDimArrayBounds(std::shared_ptr<ASTNode> arrayAccess) {
         if (!arrayAccess || arrayAccess->type != ASTNodeType::ARRAY_ACCESS) {
             return true;
         }
         
-        std::cout << "=== CHECKING ARRAY BOUNDS ===" << std::endl;
+        std::cout << "=== CHECKING MULTI-DIMENSIONAL ARRAY BOUNDS ===" << std::endl;
+        return checkArrayAccessRecursive(arrayAccess, 1);
+    }
+
+    // NEW: Get the ACTUAL array being indexed at current level
+    std::string getArrayAtCurrentLevel(std::shared_ptr<ASTNode> arrayAccess) {
+        if (!arrayAccess || arrayAccess->type != ASTNodeType::ARRAY_ACCESS) return "";
         
-        if (arrayAccess->children.size() >= 2) {
-            auto array = arrayAccess->children[0];
-            auto index = arrayAccess->children[1];
+        // The array being indexed is the LEFT child of the array access
+        if (arrayAccess->children.size() > 0 && arrayAccess->children[0]) {
+            auto leftChild = arrayAccess->children[0];
             
-            if (array && array->type == ASTNodeType::IDENTIFIER) {
-                std::string arrayName = array->value;
-                
-                if (arraySizes.find(arrayName) != arraySizes.end()) {
-                    int arraySize = arraySizes[arrayName];
-                    
-                    if (index && index->type == ASTNodeType::LITERAL_INT) {
-                        int idx = std::stoi(index->value);
-                        std::cout << "Static index check: " << idx 
-                                  << " for array '" << arrayName 
-                                  << "' of size " << arraySize << "\n";
-                        
-                        if (idx < 0 || idx >= arraySize) {
-                            error("Array index " + std::to_string(idx) + 
-                                  " out of bounds for array '" + arrayName + 
-                                  "' of size " + std::to_string(arraySize));
-                            return false;
-                        } else {
-                            std::cout << "✓ Array bound check PASSED\n";
-                            return true;
-                        }
-                    }
-                    else if (index && index->type == ASTNodeType::IDENTIFIER) {
-                        std::string indexVar = index->value;
-                        
-                        if (loopVariableRanges.find(indexVar) != loopVariableRanges.end()) {
-                            auto range = loopVariableRanges[indexVar];
-                            int minIdx = range.first;
-                            int maxIdx = range.second;
-                            
-                            std::cout << "🔥 LOOP VARIABLE CHECK: " << indexVar 
-                                      << " in [" << minIdx << ".." << maxIdx 
-                                      << "] for array '" << arrayName << "' of size " << arraySize << std::endl;
-                            
-                            if (minIdx >= 0 && maxIdx < arraySize) {
-                                std::cout << "🎯 LOOP RANGE CHECK PASSED - ALL INDICES SAFE!" << std::endl;
-                                return true;
-                            } else {
-                                error("Loop variable '" + indexVar + "' range [" + 
-                                      std::to_string(minIdx) + ".." + std::to_string(maxIdx) + 
-                                      "] may go out of bounds for array '" + arrayName + 
-                                      "' of size " + std::to_string(arraySize));
-                                return false;
-                            }
-                        } else {
-                            std::cout << "Variable index check: " << indexVar 
-                                      << " for array '" << arrayName << "' of size " << arraySize << std::endl;
-                            warning("Dynamic index for array '" + arrayName + "' - cannot verify bounds at compile time");
-                            return true;
-                        }
-                    }
-                    else {
-                        warning("Complex index expression for array '" + arrayName + "' - cannot verify bounds at compile time");
-                        return true;
-                    }
-                } else {
-                    error("Undeclared array '" + arrayName + "'");
-                    return false;
-                }
+            if (leftChild->type == ASTNodeType::IDENTIFIER) {
+                return leftChild->value;
+            }
+            else if (leftChild->type == ASTNodeType::MEMBER_ACCESS) {
+                return leftChild->value;  // The field name IS the array name
+            }
+            else if (leftChild->type == ASTNodeType::ARRAY_ACCESS) {
+                return getArrayAtCurrentLevel(leftChild);
             }
         }
         
+        return "";
+    }
+
+    bool checkArrayAccessRecursive(std::shared_ptr<ASTNode> arrayAccess, int dimension) {
+        if (!arrayAccess || arrayAccess->type != ASTNodeType::ARRAY_ACCESS) return true;
+        
+        // Get the ACTUAL array being indexed at this level
+        std::string arrayName = getArrayAtCurrentLevel(arrayAccess);
+        
+        if (arrayName.empty()) {
+            warning("Complex array access - cannot determine array for bounds checking");
+            return true;
+        }
+        
+        std::cout << "Checking access to array: '" << arrayName << "' at dimension " << dimension << std::endl;
+        
+        if (arraySizes.find(arrayName) != arraySizes.end()) {
+            int arraySize = arraySizes[arrayName];
+            
+            // Check current dimension
+            if (arrayAccess->children.size() >= 2) {
+                auto index = arrayAccess->children[1];
+                if (!checkSingleIndex(arrayName, arraySize, index, dimension, dimension)) {
+                    return false;
+                }
+            }
+            
+            // Recursively check nested array accesses
+            if (arrayAccess->children.size() > 0 && arrayAccess->children[0]) {
+                auto base = arrayAccess->children[0];
+                if (base->type == ASTNodeType::ARRAY_ACCESS) {
+                    return checkArrayAccessRecursive(base, dimension + 1);
+                }
+            }
+        } 
+        else if (declaredIdentifiers.find(arrayName) != declaredIdentifiers.end()) {
+            warning("Array '" + arrayName + "' has dynamic size - cannot verify bounds at compile time");
+            return true;
+        }
+        else {
+            error("Undeclared array '" + arrayName + "'");
+            return false;
+        }
+        
         return true;
+    }
+    
+    bool checkSingleIndex(const std::string& arrayName, int arraySize, 
+                         std::shared_ptr<ASTNode> index, int dimension, int totalDimensions) {
+        std::cout << "Checking dimension " << dimension << " of " << totalDimensions 
+                  << " for array '" << arrayName << "' size " << arraySize << std::endl;
+        
+        if (index && index->type == ASTNodeType::LITERAL_INT) {
+            int idx = std::stoi(index->value);
+            std::cout << "Static index check: " << idx << " in dimension " << dimension << "\n";
+            
+            if (idx < 1 || idx > arraySize) {
+                error("Array index " + std::to_string(idx) + 
+                      " out of bounds in dimension " + std::to_string(dimension) +
+                      " for array '" + arrayName + "' of size " + std::to_string(arraySize));
+                return false;
+            } else {
+                std::cout << "✓ Dimension " << dimension << " check PASSED\n";
+                return true;
+            }
+        }
+        else if (index && index->type == ASTNodeType::IDENTIFIER) {
+            std::string indexVar = index->value;
+            
+            if (loopVariableRanges.find(indexVar) != loopVariableRanges.end()) {
+                auto range = loopVariableRanges[indexVar];
+                int minIdx = range.first;
+                int maxIdx = range.second;
+                
+                std::cout << "🔥 LOOP VARIABLE CHECK: " << indexVar 
+                          << " in [" << minIdx << ".." << maxIdx << "] for dimension " << dimension << std::endl;
+                
+                if (minIdx >= 1 && maxIdx <= arraySize) {
+                    std::cout << "🎯 Dimension " << dimension << " RANGE CHECK PASSED!" << std::endl;
+                    return true;
+                } else {
+                    error("Loop variable '" + indexVar + "' range [" + 
+                          std::to_string(minIdx) + ".." + std::to_string(maxIdx) + 
+                          "] may go out of bounds in dimension " + std::to_string(dimension) +
+                          " for array '" + arrayName + "' of size " + std::to_string(arraySize));
+                    return false;
+                }
+            } else {
+                std::cout << "Variable index check: " << indexVar << " in dimension " << dimension << std::endl;
+                warning("Dynamic index in dimension " + std::to_string(dimension) + 
+                       " for array '" + arrayName + "' - cannot verify bounds at compile time");
+                return true;
+            }
+        }
+        else if (index && index->type == ASTNodeType::UNARY_OP) {
+            if (index->value == "-" && index->children.size() > 0) {
+                auto operand = index->children[0];
+                if (operand && operand->type == ASTNodeType::LITERAL_INT) {
+                    int idx = -std::stoi(operand->value);
+                    std::cout << "Unary index check: " << idx << " in dimension " << dimension << "\n";
+                    
+                    if (idx < 1 || idx > arraySize) {
+                        error("Array index " + std::to_string(idx) + 
+                              " out of bounds in dimension " + std::to_string(dimension) +
+                              " for array '" + arrayName + "' of size " + std::to_string(arraySize));
+                        return false;
+                    } else {
+                        std::cout << "✓ Dimension " << dimension << " check PASSED\n";
+                        return true;
+                    }
+                }
+            }
+            warning("Complex unary expression in dimension " + std::to_string(dimension) + 
+                   " for array '" + arrayName + "' - cannot verify bounds at compile time");
+            return true;
+        }
+        else {
+            warning("Complex index expression in dimension " + std::to_string(dimension) + 
+                   " for array '" + arrayName + "' - cannot verify bounds at compile time");
+            return true;
+        }
     }
 
     void collectArrayDeclaration(std::shared_ptr<ASTNode> varDecl) {
@@ -263,57 +404,176 @@ private:
         }
     }
 
-    // ========== COMPLETE USAGE ANALYSIS ==========
+    // ========== PRECISE USAGE ANALYSIS ==========
     
     void collectCompleteUsage(std::shared_ptr<ASTNode> node) {
         if (!node) return;
         
         switch (node->type) {
-            case ASTNodeType::VAR_DECL:
-                declaredIdentifiers.insert(node->value);
-                std::cout << "Found declaration: " << node->value << std::endl;
-                break;
-                
-            case ASTNodeType::IDENTIFIER:
-                usedIdentifiers.insert(node->value);
-                break;
-                
-            case ASTNodeType::MEMBER_ACCESS:
-                // Track member access: people[i].id → mark 'id' as used
-                usedIdentifiers.insert(node->value);
-                std::cout << "Found member access: " << node->value << std::endl;
-                // Also track the base object
-                if (node->children.size() > 0) {
-                    collectCompleteUsage(node->children[0]);
+            case ASTNodeType::ASSIGNMENT:
+                if (node->children.size() > 1) {
+                    trackReadsInExpression(node->children[1]);
                 }
                 break;
                 
-            case ASTNodeType::ARRAY_ACCESS:
-                // Track array base usage
-                if (node->children.size() > 0 && node->children[0]) {
-                    collectCompleteUsage(node->children[0]);
+            case ASTNodeType::IF_STMT:
+                if (node->children.size() > 0) {
+                    trackReadsInExpression(node->children[0]);
+                }
+                break;
+                
+            case ASTNodeType::WHILE_LOOP:
+                if (node->children.size() > 0) {
+                    trackReadsInExpression(node->children[0]);
+                }
+                break;
+                
+            case ASTNodeType::FOR_LOOP:
+                if (node->children.size() > 0) {
+                    trackReadsInExpression(node->children[0]);
+                }
+                break;
+                
+            case ASTNodeType::RETURN_STMT:
+                if (node->children.size() > 0) {
+                    trackReadsInExpression(node->children[0]);
+                }
+                break;
+                
+            case ASTNodeType::PRINT_STMT:
+                if (node->children.size() > 0) {
+                    trackReadsInExpression(node->children[0]);
+                }
+                break;
+                
+            case ASTNodeType::ROUTINE_CALL:
+                if (node->children.size() > 0) {
+                    trackReadsInExpression(node->children[0]);
                 }
                 break;
                 
             default:
+                if (isExpressionContext(node->type)) {
+                    trackReadsInExpression(node);
+                }
                 break;
         }
         
-        // Recursively process ALL children
         for (auto& child : node->children) {
             collectCompleteUsage(child);
         }
     }
     
-    bool isRecordFieldDeclaration(std::shared_ptr<ASTNode> varDecl) {
-        if (varDecl->children.size() > 0 && varDecl->children[0]) {
-            auto typeNode = varDecl->children[0];
-            return typeNode->type == ASTNodeType::RECORD_TYPE;
+    bool isExpressionContext(ASTNodeType type) {
+        return type == ASTNodeType::BINARY_OP ||
+               type == ASTNodeType::UNARY_OP ||
+               type == ASTNodeType::SIZE_EXPRESSION ||
+               type == ASTNodeType::LITERAL_INT ||
+               type == ASTNodeType::LITERAL_REAL ||
+               type == ASTNodeType::LITERAL_BOOL ||
+               type == ASTNodeType::LITERAL_STRING;
+    }
+    
+    void trackReadsInExpression(std::shared_ptr<ASTNode> expr) {
+        if (!expr) return;
+        
+        if (expr->type == ASTNodeType::IDENTIFIER) {
+            readVariables.insert(expr->value);
+            std::cout << "📖 TRACKED READ: " << expr->value << std::endl;
         }
+        else if (expr->type == ASTNodeType::MEMBER_ACCESS) {
+            readVariables.insert(expr->value);
+            std::cout << "📖 TRACKED READ (field): " << expr->value << std::endl;
+            if (expr->children.size() > 0) {
+                trackReadsInExpression(expr->children[0]);
+            }
+        }
+        else if (expr->type == ASTNodeType::ARRAY_ACCESS) {
+            if (expr->children.size() > 0 && expr->children[0]) {
+                trackReadsInExpression(expr->children[0]);
+            }
+        }
+        
+        for (auto& child : expr->children) {
+            trackReadsInExpression(child);
+        }
+    }
+    
+    bool isRecordType(std::shared_ptr<ASTNode> typeNode) {
+        if (!typeNode) return false;
+        
+        if (typeNode->type == ASTNodeType::RECORD_TYPE) {
+            return true;
+        }
+        
+        if (typeNode->type == ASTNodeType::USER_TYPE) {
+            std::string typeName = typeNode->value;
+            if (typeDefinitions.find(typeName) != typeDefinitions.end()) {
+                return isRecordType(typeDefinitions[typeName]);
+            }
+        }
+        
+        if (typeNode->type == ASTNodeType::ARRAY_TYPE) {
+            if (typeNode->children.size() > 1 && typeNode->children[1]) {
+                return isRecordType(typeNode->children[1]);
+            }
+        }
+        
         return false;
     }
     
-    // ========== SMART OPTIMIZATION ==========
+    bool isRecordFieldDeclaration(std::shared_ptr<ASTNode> varDecl) {
+        if (!varDecl || varDecl->children.empty() || !varDecl->children[0]) {
+            return false;
+        }
+        
+        auto typeNode = varDecl->children[0];
+        
+        if (typeNode->type == ASTNodeType::RECORD_TYPE) {
+            return true;
+        }
+        
+        if (typeNode->type == ASTNodeType::ARRAY_TYPE) {
+            if (typeNode->children.size() > 1 && typeNode->children[1]) {
+                auto elementType = typeNode->children[1];
+                return isRecordType(elementType);
+            }
+        }
+        
+        if (typeNode->type == ASTNodeType::USER_TYPE) {
+            std::string typeName = typeNode->value;
+            if (typeDefinitions.find(typeName) != typeDefinitions.end()) {
+                return isRecordType(typeDefinitions[typeName]);
+            }
+        }
+        
+        return false;
+    }
+    
+    // ========== DEBUG USAGE TRACKING ==========
+    
+    void debugUsageTracking() {
+        std::cout << "\n=== DEBUG USAGE TRACKING ===" << std::endl;
+        std::cout << "READ VARIABLES (" << readVariables.size() << "): ";
+        for (const auto& var : readVariables) {
+            std::cout << var << " ";
+        }
+        std::cout << std::endl;
+        
+        std::cout << "WRITTEN VARIABLES (" << writtenVariables.size() << "): ";
+        for (const auto& var : writtenVariables) {
+            std::cout << var << " ";
+        }
+        std::cout << std::endl;
+        
+        std::cout << "DECLARED VARIABLES (" << declaredIdentifiers.size() << "): ";
+        for (const auto& var : declaredIdentifiers) {
+            std::cout << var << " ";
+        }
+        std::cout << std::endl;
+    }
+    
+    // ========== ADVANCED OPTIMIZATION ==========
     
     void optimizeAST(std::shared_ptr<ASTNode> node) {
         if (!node) return;
@@ -338,12 +598,11 @@ private:
             if (child && child->type == ASTNodeType::VAR_DECL) {
                 std::string varName = child->value;
                 
-                // Check if this declaration is used
-                bool isUsed = (usedIdentifiers.find(varName) != usedIdentifiers.end());
+                bool isRead = (readVariables.find(varName) != readVariables.end());
+                bool isWritten = (writtenVariables.find(varName) != writtenVariables.end());
                 
-                // Handle record fields specially
                 if (isRecordFieldDeclaration(child)) {
-                    if (isUsed) {
+                    if (isRead || isWritten) {
                         newChildren.push_back(child);
                         preservedRecordFields++;
                         std::cout << "💾 PRESERVING used record field: " << varName << std::endl;
@@ -352,12 +611,15 @@ private:
                         removedCount++;
                     }
                 } 
-                // Handle regular variables
                 else {
-                    if (isUsed) {
+                    if (isRead) {
                         newChildren.push_back(child);
                     } else {
-                        std::cout << "🔥 OPTIMIZATION: Removing unused variable '" << varName << "'" << std::endl;
+                        if (isWritten) {
+                            std::cout << "🔥 OPTIMIZATION: Removing write-only variable '" << varName << "' (dead store)" << std::endl;
+                        } else {
+                            std::cout << "🔥 OPTIMIZATION: Removing unused variable '" << varName << "'" << std::endl;
+                        }
                         removedCount++;
                     }
                 }
@@ -379,9 +641,16 @@ private:
         std::cout << "\n=== OPTIMIZATION REPORT ===" << std::endl;
         
         std::vector<std::string> unusedVars;
+        std::vector<std::string> writeOnlyVars;
+        
         for (const auto& var : declaredIdentifiers) {
-            if (usedIdentifiers.find(var) == usedIdentifiers.end()) {
+            bool isRead = (readVariables.find(var) != readVariables.end());
+            bool isWritten = (writtenVariables.find(var) != writtenVariables.end());
+            
+            if (!isRead && !isWritten) {
                 unusedVars.push_back(var);
+            } else if (isWritten && !isRead) {
+                writeOnlyVars.push_back(var);
             }
         }
         
@@ -392,12 +661,24 @@ private:
                 if (i < unusedVars.size() - 1) std::cout << ", ";
             }
             std::cout << std::endl;
-        } else {
-            std::cout << "✓ All declarations are used" << std::endl;
+        }
+        
+        if (!writeOnlyVars.empty()) {
+            std::cout << "Write-only variables (potential dead stores): ";
+            for (size_t i = 0; i < writeOnlyVars.size(); ++i) {
+                std::cout << writeOnlyVars[i];
+                if (i < writeOnlyVars.size() - 1) std::cout << ", ";
+            }
+            std::cout << std::endl;
+        }
+        
+        if (unusedVars.empty() && writeOnlyVars.empty()) {
+            std::cout << "✓ All declarations are properly used" << std::endl;
         }
         
         std::cout << "Total declarations: " << declaredIdentifiers.size() << std::endl;
-        std::cout << "Total used identifiers: " << usedIdentifiers.size() << std::endl;
+        std::cout << "Variables read: " << readVariables.size() << std::endl;
+        std::cout << "Variables written: " << writtenVariables.size() << std::endl;
         std::cout << "Known array types: " << arraySizes.size() << std::endl;
     }
 

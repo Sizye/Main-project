@@ -1,0 +1,39 @@
+type Person is record
+    var id : integer;
+    var name : array[50] integer;
+    var height : real;
+    var isStudent : boolean;
+end;
+
+type Department is record
+    var name : array[30] integer;
+    var employees : array[100] Person;
+    var budget : real;
+end;
+
+type Company is record
+    var departments : array[10] Department;
+    var ceo : Person;
+end;
+
+var corp : Company;
+
+routine initializeSystem() is
+    var i : integer;
+    var j : integer;
+    
+    corp.ceo.id := 1;
+    corp.ceo.height := 1.85;
+    corp.ceo.isStudent := false;
+    
+    for i in 1..10 loop
+        corp.departments[i].budget := 100000.0 * i;
+        
+        for j in 1..50 loop
+            var empId : integer;
+            empId := (i * 100) + j;
+            corp.departments[i].employees[j].id := empId;
+            corp.departments[i].employees[j].height := 1.6 + (empId % 10) * 0.05;
+        end
+    end
+end
