@@ -11,6 +11,13 @@ type Person is record
 end;
 
 routine initializeSystem() is
+    var simple_check : array[102] integer;
+    simple_check[100] := 23;
+
+    var var_check : integer;
+    var_check := 10;
+    simple_check[var_check] := 234;
+    
     var i : integer;
     var j : integer;
     var k : integer;
