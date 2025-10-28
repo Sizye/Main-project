@@ -25,3 +25,7 @@ routine boundsStressTest() is
     T[9][19][29] := 7;     
     T[9][19][30] := 8;     
 end
+
+routine main():integer is
+    boundsStressTest();
+end

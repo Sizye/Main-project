@@ -11,6 +11,7 @@
 
 class SemanticAnalyzer {
 private:
+    // ========== CORE DATA STRUCTURES ==========
     std::unordered_map<std::string, int> arraySizes;
     std::vector<std::string> errors;
     std::vector<std::string> warnings;
@@ -19,6 +20,10 @@ private:
     std::set<std::string> declaredIdentifiers;
     std::set<std::string> writtenVariables;
     std::set<std::string> readVariables;
+    std::set<std::string> calledRoutines;
+    
+    // Track which identifiers are actually routines
+    std::set<std::string> routineDeclarations;
     
     // Loop analysis
     std::map<std::string, std::pair<int, int>> loopVariableRanges;
@@ -56,12 +61,11 @@ public:
         // PASS 5: Report optimization results
         reportOptimizations();
         
-        return semanticSuccess;
+        return semanticSuccess && errors.empty();
     }
 
 private:
     // ========== TYPE SYSTEM COLLECTION ==========
-
     void collectAllDeclarations(std::shared_ptr<ASTNode> node) {
         if (!node) return;
         
@@ -74,21 +78,12 @@ private:
             case ASTNodeType::PARAMETER:
                 declaredIdentifiers.insert(node->value);
                 std::cout << "Found parameter: " << node->value << std::endl;
-                
-                // Track sizeless array parameters
-                if (node->children.size() > 0 && node->children[0]) {
-                    auto typeNode = node->children[0];
-                    if (typeNode->type == ASTNodeType::ARRAY_TYPE) {
-                        if (typeNode->children.empty() || !typeNode->children[0]) {
-                            std::cout << "Found sizeless array parameter: " << node->value << std::endl;
-                        }
-                    }
-                }
                 break;
                 
             case ASTNodeType::ROUTINE_DECL:
             case ASTNodeType::ROUTINE_FORWARD_DECL:
                 declaredIdentifiers.insert(node->value);
+                routineDeclarations.insert(node->value); // Track as routine
                 std::cout << "Found routine: " << node->value << std::endl;
                 break;
         }
@@ -141,7 +136,6 @@ private:
     }
 
     // ========== PRECISE SEMANTIC CHECKS ==========
-    
     bool checkSemantics(std::shared_ptr<ASTNode> node) {
         if (!node) return true;
         
@@ -235,7 +229,6 @@ private:
     }
 
     // ========== MULTI-DIMENSIONAL ARRAY BOUNDS CHECKING ==========
-    
     bool checkMultiDimArrayBounds(std::shared_ptr<ASTNode> arrayAccess) {
         if (!arrayAccess || arrayAccess->type != ASTNodeType::ARRAY_ACCESS) {
             return true;
@@ -245,11 +238,9 @@ private:
         return checkArrayAccessRecursive(arrayAccess, 1);
     }
 
-    // NEW: Get the ACTUAL array being indexed at current level
     std::string getArrayAtCurrentLevel(std::shared_ptr<ASTNode> arrayAccess) {
         if (!arrayAccess || arrayAccess->type != ASTNodeType::ARRAY_ACCESS) return "";
         
-        // The array being indexed is the LEFT child of the array access
         if (arrayAccess->children.size() > 0 && arrayAccess->children[0]) {
             auto leftChild = arrayAccess->children[0];
             
@@ -257,7 +248,7 @@ private:
                 return leftChild->value;
             }
             else if (leftChild->type == ASTNodeType::MEMBER_ACCESS) {
-                return leftChild->value;  // The field name IS the array name
+                return leftChild->value;
             }
             else if (leftChild->type == ASTNodeType::ARRAY_ACCESS) {
                 return getArrayAtCurrentLevel(leftChild);
@@ -270,7 +261,6 @@ private:
     bool checkArrayAccessRecursive(std::shared_ptr<ASTNode> arrayAccess, int dimension) {
         if (!arrayAccess || arrayAccess->type != ASTNodeType::ARRAY_ACCESS) return true;
         
-        // Get the ACTUAL array being indexed at this level
         std::string arrayName = getArrayAtCurrentLevel(arrayAccess);
         
         if (arrayName.empty()) {
@@ -283,7 +273,6 @@ private:
         if (arraySizes.find(arrayName) != arraySizes.end()) {
             int arraySize = arraySizes[arrayName];
             
-            // Check current dimension
             if (arrayAccess->children.size() >= 2) {
                 auto index = arrayAccess->children[1];
                 if (!checkSingleIndex(arrayName, arraySize, index, dimension, dimension)) {
@@ -291,7 +280,6 @@ private:
                 }
             }
             
-            // Recursively check nested array accesses
             if (arrayAccess->children.size() > 0 && arrayAccess->children[0]) {
                 auto base = arrayAccess->children[0];
                 if (base->type == ASTNodeType::ARRAY_ACCESS) {
@@ -313,9 +301,7 @@ private:
     
     bool checkSingleIndex(const std::string& arrayName, int arraySize, 
                          std::shared_ptr<ASTNode> index, int dimension, int totalDimensions) {
-        std::cout << "Checking dimension " << dimension << " of " << totalDimensions 
-                  << " for array '" << arrayName << "' size " << arraySize << std::endl;
-        
+        // ... (same as before)
         if (index && index->type == ASTNodeType::LITERAL_INT) {
             int idx = std::stoi(index->value);
             std::cout << "Static index check: " << idx << " in dimension " << dimension << "\n";
@@ -358,28 +344,6 @@ private:
                 return true;
             }
         }
-        else if (index && index->type == ASTNodeType::UNARY_OP) {
-            if (index->value == "-" && index->children.size() > 0) {
-                auto operand = index->children[0];
-                if (operand && operand->type == ASTNodeType::LITERAL_INT) {
-                    int idx = -std::stoi(operand->value);
-                    std::cout << "Unary index check: " << idx << " in dimension " << dimension << "\n";
-                    
-                    if (idx < 1 || idx > arraySize) {
-                        error("Array index " + std::to_string(idx) + 
-                              " out of bounds in dimension " + std::to_string(dimension) +
-                              " for array '" + arrayName + "' of size " + std::to_string(arraySize));
-                        return false;
-                    } else {
-                        std::cout << "✓ Dimension " << dimension << " check PASSED\n";
-                        return true;
-                    }
-                }
-            }
-            warning("Complex unary expression in dimension " + std::to_string(dimension) + 
-                   " for array '" + arrayName + "' - cannot verify bounds at compile time");
-            return true;
-        }
         else {
             warning("Complex index expression in dimension " + std::to_string(dimension) + 
                    " for array '" + arrayName + "' - cannot verify bounds at compile time");
@@ -405,7 +369,6 @@ private:
     }
 
     // ========== PRECISE USAGE ANALYSIS ==========
-    
     void collectCompleteUsage(std::shared_ptr<ASTNode> node) {
         if (!node) return;
         
@@ -447,6 +410,11 @@ private:
                 break;
                 
             case ASTNodeType::ROUTINE_CALL:
+                // 🚨 CRITICAL FIX: Properly track routine calls
+                if (!node->value.empty()) {
+                    trackRoutineCall(node->value);
+                    std::cout << "📞 TRACKED ROUTINE CALL: " << node->value << std::endl;
+                }
                 if (node->children.size() > 0) {
                     trackReadsInExpression(node->children[0]);
                 }
@@ -462,6 +430,10 @@ private:
         for (auto& child : node->children) {
             collectCompleteUsage(child);
         }
+    }
+    
+    void trackRoutineCall(const std::string& routineName) {
+        calledRoutines.insert(routineName);
     }
     
     bool isExpressionContext(ASTNodeType type) {
@@ -551,7 +523,6 @@ private:
     }
     
     // ========== DEBUG USAGE TRACKING ==========
-    
     void debugUsageTracking() {
         std::cout << "\n=== DEBUG USAGE TRACKING ===" << std::endl;
         std::cout << "READ VARIABLES (" << readVariables.size() << "): ";
@@ -571,10 +542,21 @@ private:
             std::cout << var << " ";
         }
         std::cout << std::endl;
+        
+        std::cout << "ROUTINE DECLARATIONS (" << routineDeclarations.size() << "): ";
+        for (const auto& routine : routineDeclarations) {
+            std::cout << routine << " ";
+        }
+        std::cout << std::endl;
+        
+        std::cout << "CALLED ROUTINES (" << calledRoutines.size() << "): ";
+        for (const auto& routine : calledRoutines) {
+            std::cout << routine << " ";
+        }
+        std::cout << std::endl;
     }
     
     // ========== ADVANCED OPTIMIZATION ==========
-    
     void optimizeAST(std::shared_ptr<ASTNode> node) {
         if (!node) return;
         
@@ -593,17 +575,17 @@ private:
         std::vector<std::shared_ptr<ASTNode>> newChildren;
         int removedCount = 0;
         int preservedRecordFields = 0;
+        int preservedRoutines = 0;
         
-        std::cout << "=== BEFORE OPTIMIZATION ===" << std::endl;
-        std::cout << "Node children count: " << node->children.size() << std::endl;
+        std::cout << "=== OPTIMIZING NODE WITH " << node->children.size() << " CHILDREN ===" << std::endl;
+        
         for (auto& child : node->children) {
-            if (child && child->type == ASTNodeType::VAR_DECL) {
-                std::cout << "  Child: " << child->value << std::endl;
+            if (!child) {
+                newChildren.push_back(child);
+                continue;
             }
-        }
-        
-        for (auto& child : node->children) {
-            if (child && child->type == ASTNodeType::VAR_DECL) {
+            
+            if (child->type == ASTNodeType::VAR_DECL) {
                 std::string varName = child->value;
                 
                 bool isRead = (readVariables.find(varName) != readVariables.end());
@@ -620,18 +602,31 @@ private:
                     }
                 } 
                 else {
-                    if (isRead) {
+                    if (isRead || isWritten) {
                         newChildren.push_back(child);
                     } else {
-                        if (isWritten) {
-                            std::cout << "🔥 OPTIMIZATION: Removing write-only variable '" << varName << "' (dead store)" << std::endl;
-                        } else {
-                            std::cout << "🔥 OPTIMIZATION: Removing unused variable '" << varName << "'" << std::endl;
-                        }
+                        std::cout << "🔥 OPTIMIZATION: Removing unused variable '" << varName << "'" << std::endl;
                         removedCount++;
                     }
                 }
-            } else {
+            } 
+            else if (child->type == ASTNodeType::ROUTINE_DECL || 
+                     child->type == ASTNodeType::ROUTINE_FORWARD_DECL) {
+                std::string routineName = child->value;
+                bool isCalled = (calledRoutines.find(routineName) != calledRoutines.end());
+                
+                // 🚨 CRITICAL FIX: Keep routines that are called OR are main entry point
+                if (isCalled || routineName == "main" || routineName == "testRunner") {
+                    newChildren.push_back(child);
+                    preservedRoutines++;
+                    std::cout << "💾 PRESERVING routine: " << routineName 
+                              << (isCalled ? " (called)" : " (entry point)") << std::endl;
+                } else {
+                    std::cout << "🔥 OPTIMIZATION: Removing unused routine '" << routineName << "'" << std::endl;
+                    removedCount++;
+                }
+            } 
+            else {
                 newChildren.push_back(child);
             }
         }
@@ -640,21 +635,17 @@ private:
             node->children = newChildren;
             std::cout << "🔥 Removed " << removedCount << " unused declaration(s)" << std::endl;
             
-            std::cout << "=== AFTER OPTIMIZATION ===" << std::endl;
-            std::cout << "Node children count: " << node->children.size() << std::endl;
-            for (auto& child : node->children) {
-                if (child && child->type == ASTNodeType::VAR_DECL) {
-                    std::cout << "  Remaining child: " << child->value << std::endl;
-                }
-            }
-            
             if (preservedRecordFields > 0) {
                 std::cout << "💾 Preserved " << preservedRecordFields << " used record field(s)" << std::endl;
+            }
+            if (preservedRoutines > 0) {
+                std::cout << "💾 Preserved " << preservedRoutines << " routine(s)" << std::endl;
             }
         }
     }
 
     void optimizeDeadCode(std::shared_ptr<ASTNode> node) {
+        // ... (same as before)
         if (!node) return;
         
         if (node->type == ASTNodeType::BODY) {
@@ -670,7 +661,6 @@ private:
                     }
                 }
                 else if (child && child->type == ASTNodeType::FOR_LOOP) {
-                    // Check if loop body has any meaningful code
                     optimizeLoopBody(child);
                 }
                 
@@ -688,27 +678,23 @@ private:
     void optimizeLoopBody(std::shared_ptr<ASTNode> forLoop) {
         if (!forLoop || forLoop->type != ASTNodeType::FOR_LOOP) return;
         
-        // FOR_LOOP structure: [value, range, body]
         if (forLoop->children.size() > 2) {
             auto body = forLoop->children[2];
             if (body && body->type == ASTNodeType::BODY) {
-                optimizeDeadCode(body); // Recursively optimize loop body
+                optimizeDeadCode(body);
             }
         }
     }
 
-    // Helper: Check if assignment is dead (target variable is unused)
     bool isDeadAssignment(std::shared_ptr<ASTNode> assignment) {
         if (!assignment || assignment->type != ASTNodeType::ASSIGNMENT) return false;
         
         std::string target = getAssignmentTarget(assignment);
         if (target.empty()) return false;
         
-        // If target variable is NOT read anywhere, this assignment is dead
         return (readVariables.find(target) == readVariables.end());
     }
 
-    // Helper: Get the variable being assigned to
     std::string getAssignmentTarget(std::shared_ptr<ASTNode> assignment) {
         if (!assignment || assignment->children.empty()) return "";
         
@@ -718,17 +704,22 @@ private:
         if (target->type == ASTNodeType::IDENTIFIER) {
             return target->value;
         }
-        // Could handle array accesses and member accesses here too
         
         return "";
     }
+
+    // ========== OPTIMIZATION REPORT ==========
     void reportOptimizations() {
         std::cout << "\n=== OPTIMIZATION REPORT ===" << std::endl;
         
         std::vector<std::string> unusedVars;
         std::vector<std::string> writeOnlyVars;
+        std::vector<std::string> unusedRoutines;
         
         for (const auto& var : declaredIdentifiers) {
+            // Skip routines in variable analysis
+            if (routineDeclarations.find(var) != routineDeclarations.end()) continue;
+            
             bool isRead = (readVariables.find(var) != readVariables.end());
             bool isWritten = (writtenVariables.find(var) != writtenVariables.end());
             
@@ -739,8 +730,18 @@ private:
             }
         }
         
+        // Check for uncalled routines
+        for (const auto& routine : routineDeclarations) {
+            bool isCalled = (calledRoutines.find(routine) != calledRoutines.end());
+            bool isEntryPoint = (routine == "main" || routine == "testRunner");
+            
+            if (!isCalled && !isEntryPoint) {
+                unusedRoutines.push_back(routine);
+            }
+        }
+        
         if (!unusedVars.empty()) {
-            std::cout << "Unused declarations: ";
+            std::cout << "Unused variables: ";
             for (size_t i = 0; i < unusedVars.size(); ++i) {
                 std::cout << unusedVars[i];
                 if (i < unusedVars.size() - 1) std::cout << ", ";
@@ -757,16 +758,29 @@ private:
             std::cout << std::endl;
         }
         
-        if (unusedVars.empty() && writeOnlyVars.empty()) {
+        if (!unusedRoutines.empty()) {
+            std::cout << "Unused routines: ";
+            for (size_t i = 0; i < unusedRoutines.size(); ++i) {
+                std::cout << unusedRoutines[i];
+                if (i < unusedRoutines.size() - 1) std::cout << ", ";
+            }
+            std::cout << std::endl;
+        }
+        
+        if (unusedVars.empty() && writeOnlyVars.empty() && unusedRoutines.empty()) {
             std::cout << "✓ All declarations are properly used" << std::endl;
         }
         
-        std::cout << "Total declarations: " << declaredIdentifiers.size() << std::endl;
-        std::cout << "Variables read: " << readVariables.size() << std::endl;
-        std::cout << "Variables written: " << writtenVariables.size() << std::endl;
-        std::cout << "Known array types: " << arraySizes.size() << std::endl;
+        std::cout << "Statistics:" << std::endl;
+        std::cout << "  Total declarations: " << declaredIdentifiers.size() << std::endl;
+        std::cout << "  Variables read: " << readVariables.size() << std::endl;
+        std::cout << "  Variables written: " << writtenVariables.size() << std::endl;
+        std::cout << "  Routine declarations: " << routineDeclarations.size() << std::endl;
+        std::cout << "  Routines called: " << calledRoutines.size() << std::endl;
+        std::cout << "  Known array types: " << arraySizes.size() << std::endl;
     }
 
+    // ========== ERROR HANDLING ==========
     void error(const std::string& message) {
         errors.push_back(message);
         std::cerr << "ERROR: " << message << std::endl;

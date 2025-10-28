@@ -25,3 +25,6 @@ parser.tab.*
 
 # Test results
 output.txt
+
+# All AST res
+*.dot

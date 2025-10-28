@@ -37,3 +37,7 @@ routine initializeSystem() is
         end
     end
 end
+
+routine main():integer is
+    initializeSystem();
+end

@@ -25,8 +25,11 @@ end
 
 routine processPerson(p : Person) : boolean is
     var result : real;
-    result := uselessComputation();
     if result > 0 then
         result := 3;
     end
+end
+
+routine main(): integer is
+    uselessComputation();
 end

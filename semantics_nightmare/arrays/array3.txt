@@ -1,4 +1,4 @@
-routine calculateStats(data : array[] real, count : integer) : real is
+routine main(data : array[] real, count : integer) : real is
     var sum : real is 0.0;
     var avg : real;
     var i : integer;
