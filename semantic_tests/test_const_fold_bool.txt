@@ -1,0 +1,9 @@
+routine main():integer is
+    var a : boolean;
+    var b : boolean;
+    a := not false;
+    b := 1 + "a";
+    var k: boolean;
+    k := 2 + b;
+    print(k);
+end

@@ -31,6 +31,45 @@ routine processPerson(p : Person) : boolean;
 routine calculateStats(data : array[] real, count : integer) : real;
 routine complexOperation(x : integer, y : real, flag : boolean) : real;
 
+routine main() is
+    var n : integer;
+    var factResult : integer;
+    var fibResult : integer;
+    
+    print "Starting Ultimate Test...";
+    
+    initializeSystem();
+    
+    n := 10;
+    factResult := factorial(n);
+    fibResult := fibonacci(n);
+    
+    print "Factorial of", n, "is", factResult;
+    print "Fibonacci of", n, "is", fibResult;
+    print "Global counter:", globalCounter;
+    
+    runComplexCalculations();
+    
+    var i : integer;
+    var j : integer;
+    
+    for i in 1..3 loop
+        j := 1;
+        while j <= 3 loop
+            if (i + j) % 2 = 0 then
+                print "Even sum:", i, "+", j, "=", i + j;
+            else
+                print "Odd sum:", i, "+", j, "=", i + j;
+            end
+            j := j + 1;
+        end
+    end
+    
+    print "Ultimate test completed successfully!";
+end
+
+
+
 routine factorial(n : integer) : integer is
     if n <= 1 then
         return 1;
@@ -160,42 +199,7 @@ routine runComplexCalculations() is
     end
 end
 
-routine main() is
-    var n : integer;
-    var factResult : integer;
-    var fibResult : integer;
-    
-    print "Starting Ultimate Test...";
-    
-    initializeSystem();
-    
-    n := 10;
-    factResult := factorial(n);
-    fibResult := fibonacci(n);
-    
-    print "Factorial of", n, "is", factResult;
-    print "Fibonacci of", n, "is", fibResult;
-    print "Global counter:", globalCounter;
-    
-    runComplexCalculations();
-    
-    var i : integer;
-    var j : integer;
-    
-    for i in 1..3 loop
-        j := 1;
-        while j <= 3 loop
-            if (i + j) % 2 = 0 then
-                print "Even sum:", i, "+", j, "=", i + j;
-            else
-                print "Odd sum:", i, "+", j, "=", i + j;
-            end
-            j := j + 1;
-        end
-    end
-    
-    print "Ultimate test completed successfully!";
-end
+
 
 routine testRunner() is
     main();

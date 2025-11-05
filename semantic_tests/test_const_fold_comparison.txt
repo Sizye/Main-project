@@ -1,0 +1,7 @@
+routine main():integer is
+    var flag : boolean;
+    flag := 3 < 5;
+    if (5 < 2) then
+        print(flag);
+    end
+end

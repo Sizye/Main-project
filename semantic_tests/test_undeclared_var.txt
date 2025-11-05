@@ -1,0 +1,4 @@
+routine main():integer is
+    var x : integer;
+    x := 1 + 5;
+end

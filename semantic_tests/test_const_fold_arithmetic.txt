@@ -1,0 +1,9 @@
+routine main():integer is
+    var x : integer;
+    var y : integer;
+    print(y);
+    x := 5 + 3;
+    y := 10 * 2 + 1;
+    print(x+6);
+    return main();
+end

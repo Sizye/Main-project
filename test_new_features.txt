@@ -1,0 +1,10 @@
+routine main():integer is
+    var x : integer;
+    var y : integer;
+    x := 5 + 3;        // Свернется в 8
+    y := 10 * 2;       // Свернется в 20
+    
+    if 3 < 5 then      // Свернется в true
+        x := x + 1;
+    end
+end

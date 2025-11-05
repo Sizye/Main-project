@@ -58,7 +58,6 @@ ADD_PARSER_TARGET(
 # Source files
 set(AST_SOURCES
     ast.cpp
-    semantics.cpp
     main.cpp
 )
 
@@ -84,7 +83,6 @@ find_library(FL_LIBRARY fl)
 if(FL_LIBRARY)
     target_link_libraries(parser ${FL_LIBRARY})
 else()
-    # Try to find flex library with different names
     find_library(FL_LIBRARY NAMES fl flex)
     if(FL_LIBRARY)
         target_link_libraries(parser ${FL_LIBRARY})
@@ -93,7 +91,60 @@ else()
     endif()
 endif()
 
-# Add test target
+# ========== NEW: SEMANTIC TEST SUITE ==========
+enable_testing()
+
+# Helper function to add semantic tests
+function(add_semantic_test test_name input_file should_pass)
+    add_test(
+        NAME ${test_name}
+        COMMAND ${CMAKE_CURRENT_BINARY_DIR}/parser < ${CMAKE_CURRENT_SOURCE_DIR}/${input_file}
+        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
+    )
+    
+    if(should_pass)
+        set_tests_properties(${test_name} PROPERTIES
+            PASS_REGULAR_EXPRESSION "=== STARTING SEMANTIC ANALYSIS ==="
+        )
+    else()
+        set_tests_properties(${test_name} PROPERTIES
+            PASS_REGULAR_EXPRESSION "ERROR:"
+        )
+    endif()
+endfunction()
+
+# Add semantic tests for declarations before usage
+add_semantic_test(test_undeclared_var 
+    "semantic_tests/test_undeclared_var.txt" FALSE)
+
+add_semantic_test(test_undeclared_type 
+    "semantic_tests/test_undeclared_type.txt" FALSE)
+
+add_semantic_test(test_undeclared_routine 
+    "semantic_tests/test_undeclared_routine.txt" FALSE)
+
+add_semantic_test(test_forward_decl_ok 
+    "semantic_tests/test_forward_decl_ok.txt" TRUE)
+
+# Add constant folding tests
+add_semantic_test(test_const_fold_arithmetic 
+    "semantic_tests/test_const_fold_arithmetic.txt" TRUE)
+
+add_semantic_test(test_const_fold_comparison 
+    "semantic_tests/test_const_fold_comparison.txt" TRUE)
+
+add_semantic_test(test_const_fold_bool 
+    "semantic_tests/test_const_fold_bool.txt" TRUE)
+
+# Custom target to run all semantic tests
+add_custom_target(run_semantic_tests
+    COMMAND ${CMAKE_CTEST_COMMAND} --output-on-failure -R "test_"
+    DEPENDS parser
+    WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
+    COMMENT "Running semantic analysis tests"
+)
+
+# Add test target (backward compatibility)
 if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/test_input.txt)
     add_custom_target(test
         COMMAND ./parser < ${CMAKE_CURRENT_SOURCE_DIR}/test_input.txt || true
@@ -123,3 +174,4 @@ message(STATUS "Compiler: ${CMAKE_CXX_COMPILER}")
 message(STATUS "Build type: ${CMAKE_BUILD_TYPE}")
 message(STATUS "Flex executable: ${FLEX_EXECUTABLE}")
 message(STATUS "Bison executable: ${BISON_EXECUTABLE}")
+message(STATUS "Semantic tests enabled: YES")

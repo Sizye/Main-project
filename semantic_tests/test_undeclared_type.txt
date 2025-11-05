@@ -1,0 +1,4 @@
+var x : UnknownType;
+
+routine main():integer is
+end

@@ -1,0 +1,10 @@
+routine foo();
+
+routine main():integer is
+    foo();
+end
+
+routine foo() is
+    var x : integer;
+    x := 10;
+end
