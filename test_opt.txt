@@ -8,16 +8,16 @@ var B: Matrix;
 var C: Matrix;
 var result: Vector;
 var temp: real;
-
+    
 routine matrixMultiply() is
     var i: integer;
     var j: integer; 
     var k: integer;
     as := 0;
-    for i in 1..150 loop
-        for j in 1..50 loop
+    for i in 1..100 loop
+        for j in 1..100 loop
             temp := 0.0;
-            for k in 1..150 loop
+            for k in 1..100 loop
                 temp := temp + A[i][k] * B[k][j];
             end
             C[i][j] := temp;

@@ -638,12 +638,15 @@ private:
         }
         return true;
     }
-
+    bool oneTime = false;
     bool checkMultiDimArrayBounds(std::shared_ptr<ASTNode> arrayAccess) {
         if (!arrayAccess || arrayAccess->type != ASTNodeType::ARRAY_ACCESS) {
             return true;
         }
-        std::cout << "=== CHECKING MULTI-DIMENSIONAL ARRAY BOUNDS ===" << std::endl;
+        if (!oneTime) {
+            std::cout << "=== CHECKING MULTI-DIMENSIONAL ARRAY BOUNDS ===" << std::endl;
+            oneTime = true;
+        }
         return checkArrayAccessRecursive(arrayAccess, 1);
     }
 
@@ -671,8 +674,6 @@ private:
             warning("Complex array access - cannot determine array for bounds checking");
             return true;
         }
-        
-        std::cout << "Checking access to array: '" << arrayName << "' at dimension " << dimension << std::endl;
         
         if (declaredIdentifiers.find(arrayName) != declaredIdentifiers.end()) {
             if (arraySizes.find(arrayName) != arraySizes.end()) {
@@ -719,14 +720,9 @@ private:
                          std::shared_ptr<ASTNode> index, int dimension) {
         if (index && index->type == ASTNodeType::LITERAL_INT) {
             int idx = std::stoi(index->value);
-            std::cout << "Static index check: " << idx << " in dimension " << dimension << "\n";
             if (idx < 1 || idx > arraySize) {
-                error("Array index " + std::to_string(idx) +
-                     " out of bounds in dimension " + std::to_string(dimension) +
-                     " for array '" + arrayName + "' of size " + std::to_string(arraySize));
                 return false;
             } else {
-                std::cout << "✓ Dimension " << dimension << " check PASSED\n";
                 return true;
             }
         }
