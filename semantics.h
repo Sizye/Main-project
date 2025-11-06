@@ -1069,7 +1069,14 @@ private:
 
     void optimizeAST(std::shared_ptr<ASTNode> node) {
         if (!node) return;
-        
+         if (node->type == ASTNodeType::TYPE_DECL || 
+            node->type == ASTNodeType::RECORD_TYPE ||
+            node->type == ASTNodeType::ARRAY_TYPE ||
+            node->type == ASTNodeType::PRIMITIVE_TYPE ||
+            node->type == ASTNodeType::USER_TYPE) {
+                std::cout << "💾 PRESERVING type node: " << astNodeTypeToString(node->type) << std::endl;
+                return;
+        }
         // Optimize ALL bodies, not just PROGRAM and top-level BODY
         if (node->type == ASTNodeType::BODY || 
             node->type == ASTNodeType::PROGRAM ||
@@ -1123,11 +1130,6 @@ private:
     void optimizeUnusedDeclarations(std::shared_ptr<ASTNode> node) {
         if (!node) return;
 
-        // NEVER optimize inside TYPE_DECL nodes!
-        if (node->type == ASTNodeType::TYPE_DECL) {
-            std::cout << "💾 PRESERVING entire type definition: " << node->value << std::endl;
-            return; // Skip optimization for type definitions!
-        }
         
         std::vector<std::shared_ptr<ASTNode>> newChildren;
         int removedCount = 0;
