@@ -1214,10 +1214,27 @@ private:
                 
                 // Check if this assignment should be removed
                 if (!target.empty() && writeOnlyVarsToRemove.find(target) != writeOnlyVarsToRemove.end()) {
-                    // This assignment is to a write-only variable we're removing - REMOVE IT!
-                    std::cout << "🔥 OPTIMIZATION: Removing assignment to write-only variable '" << target << "'" << std::endl;
-                    removedCount++;
-                    // DON'T add to newChildren - this removes the assignment
+                    // Check if RHS has side effects
+                    bool rhsHasSideEffects = false;
+                    if (child->children.size() > 1 && child->children[1]) {
+                        rhsHasSideEffects = hasSideEffectsOrExternalAccess(child->children[1]);
+                    }
+                    
+                    if (rhsHasSideEffects) {
+                        // PRESERVE the function call but remove the assignment
+                        // Convert: unusedResult := sideEffectFunction()
+                        // To:      sideEffectFunction()  (standalone call)
+                        std::cout << "💾 PRESERVING side effects in assignment to '" << target << "'" << std::endl;
+                        
+                        // Extract the RHS and add it as a standalone expression
+                        auto rhs = child->children[1];
+                        newChildren.push_back(rhs);
+                        preservedSideEffects++;
+                    } else {
+                        // Remove the entire assignment (no side effects)
+                        std::cout << "🔥 OPTIMIZATION: Removing assignment to write-only variable '" << target << "'" << std::endl;
+                        removedCount++;
+                    }
                 }
                 else {
                     // Check if this assignment should be preserved due to side effects
@@ -1303,6 +1320,12 @@ private:
         std::cout << std::endl;
         
         switch (node->type) {
+            case ASTNodeType::PRINT_STMT:
+                if (node->children.size() > 0) {
+                    // Track ALL identifiers in print statements as READS!
+                    trackReadsInExpression(node->children[0]);
+                }
+                break;
             case ASTNodeType::IF_STMT:
                 std::cout << "  📊 IF_STMT with " << node->children.size() << " children" << std::endl;
                 if (node->children.size() > 0) {

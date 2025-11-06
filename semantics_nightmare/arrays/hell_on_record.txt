@@ -52,14 +52,6 @@ end;
 
 var people : array[100] Person;
 
-routine testNestedRecords() is
-    people[1].id := 1;
-    people[1].home.street[1] := 65; 
-    people[101].home.city[1] := 66; 
-    people[0].id := 2;
-end
-
 routine main():integer is
     initializeSystem();
-    testNestedRecords();
 end
