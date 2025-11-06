@@ -1,12 +1,12 @@
 type Array10 is array[10] integer;
-var arr: Array10;
+
 
 routine testNegativeIndices() is
-    arr[-1] := 100;
-    arr[-5] := 200; 
-    arr[0] := 300;
-    arr[11] := 500;
-
+    var arr: Array10;
+    var x : integer;
+    x := arr[100];
+    var arr : array[234] integer;
     arr[1] := 400;
-    arr[10] := 500;
+    arr[10] := 500
+    ;
 end

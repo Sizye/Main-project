@@ -33,6 +33,9 @@ routine complexOperation(x : integer, y : real, flag : boolean) : real;
 
 
 routine factorial(n : integer) : integer is
+    if corp.departments[1].employees[1].name > 0 then
+        return;
+    end
     if n <= 1 then
         return 1;
     else
@@ -109,11 +112,15 @@ routine complexOperation(x : integer, y : real, flag : boolean) : real is
     return result;
 end
 
+routine f () is
+    print "sdfdf";
+end
+
 routine initializeSystem() is
     var i : integer;
     var j : integer;
     var k : integer;
-    
+    var temp : integer;
     for i in 1..100 loop
         people[i].id := 1000 + i;
         people[i].height := 1.5 + (i % 10) * 0.1;
@@ -130,7 +137,7 @@ routine initializeSystem() is
         for j in 1..50 loop
             var empId : integer;
             empId := (i * 100) + j;
-            corp.departments[i].employees[j].id := empId;
+            temp := f(5);
             corp.departments[i].employees[j].height := 1.6 + (empId % 10) * 0.05;
             if corp.departments[1].employees[1].id <= 23 then
                 return;

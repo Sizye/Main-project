@@ -16,7 +16,10 @@ private:
     std::vector<std::string> errors;
     std::vector<std::string> warnings;
     std::set<std::string> globalVariables;
-    std::set<std::string> variablesWithSideEffects;
+    std::set<std::string> functionsWithSideEffects;
+    std::set<std::string> functionsThatReadGlobals;
+    std::set<std::string> functionsThatWriteGlobals;
+    std::set<std::string> outerScopeVariables;
 
     // PRECISE usage tracking
     std::set<std::string> declaredIdentifiers;
@@ -76,7 +79,43 @@ private:
     void declareRoutine(const std::string& n) { 
         if (!scopeStack.empty()) scopeStack.back().routines.insert(n); 
     }
-
+    std::string astNodeTypeToString(ASTNodeType type) {
+        switch (type) {
+            case ASTNodeType::PROGRAM: return "PROGRAM";
+            case ASTNodeType::VAR_DECL: return "VAR_DECL";
+            case ASTNodeType::TYPE_DECL: return "TYPE_DECL";
+            case ASTNodeType::ROUTINE_DECL: return "ROUTINE_DECL";
+            case ASTNodeType::ROUTINE_FORWARD_DECL: return "ROUTINE_FORWARD_DECL";
+            case ASTNodeType::PARAMETER: return "PARAMETER";
+            case ASTNodeType::PRIMITIVE_TYPE: return "PRIMITIVE_TYPE";
+            case ASTNodeType::ARRAY_TYPE: return "ARRAY_TYPE";
+            case ASTNodeType::RECORD_TYPE: return "RECORD_TYPE";
+            case ASTNodeType::USER_TYPE: return "USER_TYPE";
+            case ASTNodeType::BINARY_OP: return "BINARY_OP";
+            case ASTNodeType::UNARY_OP: return "UNARY_OP";
+            case ASTNodeType::LITERAL_INT: return "LITERAL_INT";
+            case ASTNodeType::LITERAL_REAL: return "LITERAL_REAL";
+            case ASTNodeType::LITERAL_BOOL: return "LITERAL_BOOL";
+            case ASTNodeType::LITERAL_STRING: return "LITERAL_STRING";
+            case ASTNodeType::IDENTIFIER: return "IDENTIFIER";
+            case ASTNodeType::ROUTINE_CALL: return "ROUTINE_CALL";
+            case ASTNodeType::ARRAY_ACCESS: return "ARRAY_ACCESS";
+            case ASTNodeType::MEMBER_ACCESS: return "MEMBER_ACCESS";
+            case ASTNodeType::SIZE_EXPRESSION: return "SIZE_EXPRESSION";
+            case ASTNodeType::ASSIGNMENT: return "ASSIGNMENT";
+            case ASTNodeType::IF_STMT: return "IF_STMT";
+            case ASTNodeType::WHILE_LOOP: return "WHILE_LOOP";
+            case ASTNodeType::FOR_LOOP: return "FOR_LOOP";
+            case ASTNodeType::PRINT_STMT: return "PRINT_STMT";
+            case ASTNodeType::RETURN_STMT: return "RETURN_STMT";
+            case ASTNodeType::BODY: return "BODY";
+            case ASTNodeType::EXPRESSION_LIST: return "EXPRESSION_LIST";
+            case ASTNodeType::PARAMETER_LIST: return "PARAMETER_LIST";
+            case ASTNodeType::ARGUMENT_LIST: return "ARGUMENT_LIST";
+            case ASTNodeType::RANGE: return "RANGE";
+            default: return "UNKNOWN";
+        }
+    }
 public:
     bool analyze(std::shared_ptr<ASTNode> ast) {
         std::cout << "=== STARTING SEMANTIC ANALYSIS ===" << std::endl;
@@ -88,18 +127,27 @@ public:
         // PASS 0: Collect type definitions FIRST
         collectTypeDefinitions(ast);
         
-        // PASS 0.5: NEW - Track global variables
+        // PASS 0.5: Track global variables
         std::cout << "=== PASS 0.5: GLOBAL VARIABLE TRACKING ===" << std::endl;
         trackGlobalVariables(ast);
         
         // PASS 1: Collect ALL declarations (including parameters)
         collectAllDeclarations(ast);
         
-        // PASS 1.5: NEW - Constant folding optimization
+        // NEW PASS: Collect outer scope variables
+        std::cout << "=== PASS 1.2: OUTER SCOPE VARIABLE TRACKING ===" << std::endl;
+        collectOuterScopeVariables(ast);
+        std::cout << "🔍 Found " << outerScopeVariables.size() << " outer scope variables: ";
+        for (const auto& var : outerScopeVariables) {
+            std::cout << var << " ";
+        }
+        std::cout << std::endl;
+        
+        // PASS 1.5: Constant folding optimization
         std::cout << "=== PASS 1.5: CONSTANT FOLDING ===" << std::endl;
         foldConstants(ast);
         
-        // PASS 1.7: NEW - Check declarations before usage
+        // PASS 1.7: Check declarations before usage
         std::cout << "=== PASS 1.7: DECLARATIONS BEFORE USAGE ===" << std::endl;
         bool declOk = checkDeclaredBeforeUsage(ast);
         
@@ -112,7 +160,7 @@ public:
         // DEBUG: Show what we tracked
         debugUsageTracking();
         
-        // PASS 4: Run ADVANCED optimizations (now with global awareness)
+        // PASS 4: Run ADVANCED optimizations (now with global AND outer scope awareness)
         optimizeAST(ast);
         
         // PASS 5: Report optimization results
@@ -490,7 +538,159 @@ private:
     }
 
     // ========== EXISTING CODE CONTINUES BELOW ==========
-    
+    void collectOuterScopeVariables(std::shared_ptr<ASTNode> node, int currentDepth = 0, 
+                               const std::set<std::string>& currentScopeVars = {}) {
+        if (!node) return;
+        
+        std::set<std::string> newCurrentScopeVars = currentScopeVars;
+        
+        if (node->type == ASTNodeType::ROUTINE_DECL || 
+            node->type == ASTNodeType::ROUTINE_FORWARD_DECL ||
+            node->type == ASTNodeType::FOR_LOOP) {
+            
+            // When entering a new scope, track which variables are declared in THIS scope
+            if (node->type == ASTNodeType::ROUTINE_DECL) {
+                // Parameters are in current scope
+                if (node->children.size() > 0 && node->children[0] && 
+                    node->children[0]->type == ASTNodeType::PARAMETER_LIST) {
+                    for (auto& param : node->children[0]->children) {
+                        if (param && param->type == ASTNodeType::PARAMETER) {
+                            newCurrentScopeVars.insert(param->value);
+                        }
+                    }
+                }
+            }
+            else if (node->type == ASTNodeType::FOR_LOOP) {
+                newCurrentScopeVars.insert(node->value); // loop variable
+            }
+            
+            // Recursively process children with the new scope
+            for (auto& child : node->children) {
+                collectOuterScopeVariables(child, currentDepth + 1, newCurrentScopeVars);
+            }
+            return;
+        }
+        
+        if (node->type == ASTNodeType::VAR_DECL && currentDepth > 0) {
+            // Add this variable to current scope
+            newCurrentScopeVars.insert(node->value);
+        }
+        
+        if (node->type == ASTNodeType::IDENTIFIER && currentDepth > 0) {
+            // If we find an identifier that's NOT in current scope but IS declared, it's from outer scope
+            if (currentScopeVars.find(node->value) == currentScopeVars.end() &&
+                declaredIdentifiers.find(node->value) != declaredIdentifiers.end()) {
+                outerScopeVariables.insert(node->value);
+                std::cout << "🔍 FOUND OUTER SCOPE VARIABLE: " << node->value << std::endl;
+            }
+        }
+        
+        for (auto& child : node->children) {
+            collectOuterScopeVariables(child, currentDepth, newCurrentScopeVars);
+        }
+    }
+
+    // ========== DETECT WRITES TO OUTER SCOPE VARIABLES ==========
+    bool writesToOuterScope(std::shared_ptr<ASTNode> assignment) {
+        if (!assignment || assignment->type != ASTNodeType::ASSIGNMENT) return false;
+        
+        std::string target = getAssignmentTarget(assignment);
+        if (target.empty()) return false;
+        
+        // Check if this variable exists in outer scope
+        return outerScopeVariables.find(target) != outerScopeVariables.end();
+    }
+
+    bool accessesOuterScope(std::shared_ptr<ASTNode> node) {
+        if (!node) return false;
+        
+        if (node->type == ASTNodeType::IDENTIFIER) {
+            return outerScopeVariables.find(node->value) != outerScopeVariables.end();
+        }
+        else if (node->type == ASTNodeType::MEMBER_ACCESS) {
+            if (node->children.size() > 0 && node->children[0]) {
+                return accessesOuterScope(node->children[0]);
+            }
+            return outerScopeVariables.find(node->value) != outerScopeVariables.end();
+        }
+        else if (node->type == ASTNodeType::ARRAY_ACCESS) {
+            if (node->children.size() > 0 && node->children[0]) {
+                return accessesOuterScope(node->children[0]);
+            }
+        }
+        
+        // Check children
+        for (auto& child : node->children) {
+            if (accessesOuterScope(child)) {
+                return true;
+            }
+        }
+        
+        return false;
+    }
+
+    // ========== SIDE EFFECT DETECTION ==========
+    bool hasSideEffects(std::shared_ptr<ASTNode> node) {
+        if (!node) return false;
+        
+        // FUNCTION CALLS ALWAYS HAVE POTENTIAL SIDE EFFECTS!
+        if (node->type == ASTNodeType::ROUTINE_CALL) {
+            return true;
+        }
+        
+        if (node->type == ASTNodeType::ASSIGNMENT && writesToOuterScope(node)) {
+            return true;
+        }
+        
+        // Check children recursively
+        for (auto& child : node->children) {
+            if (hasSideEffects(child)) {
+                return true;
+            }
+        }
+        
+        return false;
+    }
+
+    // Check if expression has side effects (function calls, global access, outer scope access)
+    bool hasSideEffectsOrExternalAccess(std::shared_ptr<ASTNode> node) {
+        if (!node) return false;
+        
+        return hasSideEffects(node) || 
+            involvesGlobalVariable(node) || 
+            accessesOuterScope(node);
+    }
+
+    //isDeadAssignment with complete side effect awareness
+    bool isDeadAssignment(std::shared_ptr<ASTNode> assignment) {
+        if (!assignment || assignment->type != ASTNodeType::ASSIGNMENT) return false;
+        
+        std::string target = getAssignmentTarget(assignment);
+        if (target.empty()) return false;
+        
+        // NEVER remove assignments to global variables
+        if (globalVariables.find(target) != globalVariables.end()) {
+            return false;
+        }
+        
+        // NEVER remove assignments to outer scope variables
+        if (false) {
+            std::cout << "💾 PRESERVING assignment to outer scope variable '" << target << "'" << std::endl;
+            return false;
+        }
+        
+        // Check if the RHS has side effects - if so, PRESERVE!
+        if (assignment->children.size() > 1 && assignment->children[1]) {
+            if (hasSideEffectsOrExternalAccess(assignment->children[1])) {
+                std::cout << "💾 PRESERVING assignment with side effects to '" << target << "'" << std::endl;
+                return false;
+            }
+        }
+        
+        // Only consider it dead if it's a local variable that's never read AND has no side effects
+        return (readVariables.find(target) == readVariables.end());
+    }
+
     bool isVariableUsedOnlyInDeadCode(const std::string& varName, std::shared_ptr<ASTNode> /* node */) {
         return (declaredIdentifiers.find(varName) != declaredIdentifiers.end()) &&
                (readVariables.find(varName) == readVariables.end()) &&
@@ -598,13 +798,18 @@ private:
 
     void trackVariableWrite(std::shared_ptr<ASTNode> leftSide) {
         if (!leftSide) return;
+        
+        std::cout << "  📝 WRITE TRACKING: " << astNodeTypeToString(leftSide->type);
+        if (!leftSide->value.empty()) std::cout << " (" << leftSide->value << ")";
+        std::cout << std::endl;
+        
         if (leftSide->type == ASTNodeType::IDENTIFIER) {
             writtenVariables.insert(leftSide->value);
-            std::cout << "📝 TRACKED WRITE: " << leftSide->value << std::endl;
+            std::cout << "  ✅📝 TRACKED WRITE: " << leftSide->value << std::endl;
         }
         else if (leftSide->type == ASTNodeType::MEMBER_ACCESS) {
             writtenVariables.insert(leftSide->value);
-            std::cout << "📝 TRACKED WRITE (field): " << leftSide->value << std::endl;
+            std::cout << "  ✅📝 TRACKED WRITE (field): " << leftSide->value << std::endl;
             if (leftSide->children.size() > 0 && leftSide->children[0]) {
                 trackVariableWrite(leftSide->children[0]);
             }
@@ -776,59 +981,6 @@ private:
         }
     }
 
-    void collectCompleteUsage(std::shared_ptr<ASTNode> node) {
-        if (!node) return;
-        switch (node->type) {
-            case ASTNodeType::ASSIGNMENT:
-                if (node->children.size() > 1) {
-                    trackReadsInExpression(node->children[1]);
-                }
-                break;
-            case ASTNodeType::IF_STMT:
-                if (node->children.size() > 0) {
-                    trackReadsInExpression(node->children[0]);
-                }
-                break;
-            case ASTNodeType::WHILE_LOOP:
-                if (node->children.size() > 0) {
-                    trackReadsInExpression(node->children[0]);
-                }
-                break;
-            case ASTNodeType::FOR_LOOP:
-                if (node->children.size() > 0) {
-                    trackReadsInExpression(node->children[0]);
-                }
-                break;
-            case ASTNodeType::RETURN_STMT:
-                if (node->children.size() > 0) {
-                    trackReadsInExpression(node->children[0]);
-                }
-                break;
-            case ASTNodeType::PRINT_STMT:
-                if (node->children.size() > 0) {
-                    trackReadsInExpression(node->children[0]);
-                }
-                break;
-            case ASTNodeType::ROUTINE_CALL:
-                if (!node->value.empty()) {
-                    trackRoutineCall(node->value);
-                    std::cout << "📞 TRACKED ROUTINE CALL: " << node->value << std::endl;
-                }
-                if (node->children.size() > 0) {
-                    trackReadsInExpression(node->children[0]);
-                }
-                break;
-            default:
-                if (isExpressionContext(node->type)) {
-                    trackReadsInExpression(node);
-                }
-                break;
-        }
-        
-        for (auto& child : node->children) {
-            collectCompleteUsage(child);
-        }
-    }
 
     void trackRoutineCall(const std::string& routineName) {
         calledRoutines.insert(routineName);
@@ -842,29 +994,6 @@ private:
                type == ASTNodeType::LITERAL_REAL ||
                type == ASTNodeType::LITERAL_BOOL ||
                type == ASTNodeType::LITERAL_STRING;
-    }
-
-    void trackReadsInExpression(std::shared_ptr<ASTNode> expr) {
-        if (!expr) return;
-        if (expr->type == ASTNodeType::IDENTIFIER) {
-            readVariables.insert(expr->value);
-            std::cout << "📖 TRACKED READ: " << expr->value << std::endl;
-        }
-        else if (expr->type == ASTNodeType::MEMBER_ACCESS) {
-            readVariables.insert(expr->value);
-            std::cout << "📖 TRACKED READ (field): " << expr->value << std::endl;
-            if (expr->children.size() > 0) {
-                trackReadsInExpression(expr->children[0]);
-            }
-        }
-        else if (expr->type == ASTNodeType::ARRAY_ACCESS) {
-            if (expr->children.size() > 0 && expr->children[0]) {
-                trackReadsInExpression(expr->children[0]);
-            }
-        }
-        for (auto& child : expr->children) {
-            trackReadsInExpression(child);
-        }
     }
 
     bool isRecordType(std::shared_ptr<ASTNode> typeNode) {
@@ -940,187 +1069,329 @@ private:
 
     void optimizeAST(std::shared_ptr<ASTNode> node) {
         if (!node) return;
-        if (node->type == ASTNodeType::BODY || node->type == ASTNodeType::PROGRAM) {
+        
+        // Optimize ALL bodies, not just PROGRAM and top-level BODY
+        if (node->type == ASTNodeType::BODY || 
+            node->type == ASTNodeType::PROGRAM ||
+            node->type == ASTNodeType::ROUTINE_DECL) {
+            std::cout << "🎯 OPTIMIZING: " << astNodeTypeToString(node->type) << std::endl;
             optimizeUnusedDeclarations(node);
         }
+        
         optimizeDeadCode(node);
+        
         for (auto& child : node->children) {
             optimizeAST(child);
         }
     }
-
     void removeAssignmentsToVariable(const std::string& varName, std::shared_ptr<ASTNode> node) {
         if (!node) return;
-        if (node->type == ASTNodeType::BODY) {
+        
+        if (node->type == ASTNodeType::BODY || node->type == ASTNodeType::PROGRAM) {
             std::vector<std::shared_ptr<ASTNode>> newChildren;
             for (auto& child : node->children) {
                 bool shouldKeep = true;
+                
                 if (child && child->type == ASTNodeType::ASSIGNMENT) {
                     std::string target = getAssignmentTarget(child);
                     if (target == varName) {
-                        std::cout << "🔥 OPTIMIZATION: Removing assignment to write-only variable '"
-                                 << varName << "'" << std::endl;
+                        std::cout << "    🔥 Removing assignment to: " << varName << std::endl;
                         shouldKeep = false;
                     }
                 }
+                
                 if (shouldKeep) {
                     newChildren.push_back(child);
+                    // Recursively process this child to remove nested assignments
                     removeAssignmentsToVariable(varName, child);
                 }
             }
+            
             if (newChildren.size() != node->children.size()) {
                 node->children = newChildren;
+                std::cout << "    🔥 Removed " << (node->children.size() - newChildren.size()) 
+                        << " assignment(s) to '" << varName << "'" << std::endl;
             }
         } else {
+            // For non-body nodes, recursively process all children
             for (auto& child : node->children) {
                 removeAssignmentsToVariable(varName, child);
             }
         }
     }
 
-        void optimizeUnusedDeclarations(std::shared_ptr<ASTNode> node) {
-            if (!node) return;
-            std::vector<std::shared_ptr<ASTNode>> newChildren;
-            int removedCount = 0;
-            int preservedRecordFields = 0;
-            int preservedRoutines = 0;
-            int preservedGlobalWrites = 0;
-            int removedUnusedGlobals = 0;  // NEW: Track removed globals
+    void optimizeUnusedDeclarations(std::shared_ptr<ASTNode> node) {
+        if (!node) return;
+        std::vector<std::shared_ptr<ASTNode>> newChildren;
+        int removedCount = 0;
+        int preservedRecordFields = 0;
+        int preservedRoutines = 0;
+        int preservedGlobalWrites = 0;
+        int preservedSideEffects = 0;
+        int removedUnusedGlobals = 0;
+        
+        // COLLECT all write-only variables first
+        std::set<std::string> writeOnlyVarsToRemove;
+        
+        std::cout << "=== OPTIMIZING NODE WITH " << node->children.size() << " CHILDREN ===" << std::endl;
+        
+        // FIRST PASS: Identify which variables to remove
+        for (auto& child : node->children) {
+            if (!child) continue;
             
-            std::cout << "=== OPTIMIZING NODE WITH " << node->children.size() << " CHILDREN ===" << std::endl;
-            
-            for (auto& child : node->children) {
-                if (!child) {
-                    newChildren.push_back(child);
-                    continue;
-                }
+            if (child->type == ASTNodeType::VAR_DECL) {
+                std::string varName = child->value;
+                bool isRead = (readVariables.find(varName) != readVariables.end());
+                bool isWritten = (writtenVariables.find(varName) != writtenVariables.end());
+                bool isGlobal = (globalVariables.find(varName) != globalVariables.end());
                 
-                if (child->type == ASTNodeType::VAR_DECL) {
-                    std::string varName = child->value;
-                    bool isRead = (readVariables.find(varName) != readVariables.end());
-                    bool isWritten = (writtenVariables.find(varName) != writtenVariables.end());
-                    bool isUsedInDeadCode = isVariableUsedOnlyInDeadCode(varName, node);
-                    bool isGlobal = (globalVariables.find(varName) != globalVariables.end());
-                    
-                    if (isRecordFieldDeclaration(child)) {
+                std::cout << "🔍 VAR ANALYSIS: " << varName 
+                        << " | Read: " << isRead 
+                        << " | Written: " << isWritten
+                        << " | Global: " << isGlobal << std::endl;
+                
+                if (!isRecordFieldDeclaration(child)) {
+                    if (!isRead && isWritten && !isGlobal) {
+                        // Mark this write-only local variable for removal
+                        writeOnlyVarsToRemove.insert(varName);
+                        std::cout << "🎯 MARKED for removal: " << varName << std::endl;
+                    }
+                }
+            }
+        }
+        
+        // SECOND PASS: Actually build the new children list
+        for (auto& child : node->children) {
+            if (!child) {
+                newChildren.push_back(child);
+                continue;
+            }
+            
+            if (child->type == ASTNodeType::VAR_DECL) {
+                std::string varName = child->value;
+                bool isRead = (readVariables.find(varName) != readVariables.end());
+                bool isWritten = (writtenVariables.find(varName) != writtenVariables.end());
+                bool isGlobal = (globalVariables.find(varName) != globalVariables.end());
+                
+                if (isRecordFieldDeclaration(child)) {
+                    if (isRead || isWritten) {
+                        newChildren.push_back(child);
+                        preservedRecordFields++;
+                        std::cout << "💾 PRESERVING used record field: " << varName << std::endl;
+                    } else {
+                        std::cout << "🔥 OPTIMIZATION: Removing UNUSED record field '" << varName << "'" << std::endl;
+                        removedCount++;
+                        // DON'T add to newChildren - this removes the declaration
+                    }
+                }
+                else {
+                    if (isRead) {
+                        newChildren.push_back(child);
+                        std::cout << "💾 PRESERVING read variable: " << varName << std::endl;
+                    } else if (isGlobal) {
                         if (isRead || isWritten) {
                             newChildren.push_back(child);
-                            preservedRecordFields++;
-                            std::cout << "💾 PRESERVING used record field: " << varName << std::endl;
-                        } else if (isUsedInDeadCode) {
-                            std::cout << "🔥 OPTIMIZATION: Removing variable '" << varName
-                                    << "' used only in dead code" << std::endl;
-                            removedCount++;
+                            std::cout << "💾 PRESERVING USED GLOBAL variable: " << varName << std::endl;
                         } else {
-                            std::cout << "🔥 OPTIMIZATION: Removing UNUSED record field '" << varName << "'" << std::endl;
+                            std::cout << "🔥 OPTIMIZATION: Removing UNUSED GLOBAL variable '" << varName << "'" << std::endl;
                             removedCount++;
+                            removedUnusedGlobals++;
                         }
-                    }
-                    else {
-                        if (isRead) {
-                            newChildren.push_back(child);
-                            std::cout << "💾 PRESERVING read variable: " << varName << std::endl;
-                        } else if (isWritten && !isRead && !isGlobal) {
-                            // Only remove write-only variables if they're NOT global
-                            std::cout << "🔥 OPTIMIZATION: Removing write-only LOCAL variable '" << varName << "'" << std::endl;
-                            removedCount++;
-                            removeAssignmentsToVariable(varName, node);
-                        } else if (isGlobal) {
-                            // ONLY preserve global variables if they're actually USED
-                            if (isRead || isWritten) {
-                                newChildren.push_back(child);
-                                std::cout << "💾 PRESERVING USED GLOBAL variable: " << varName << std::endl;
-                            } else {
-                                // Remove UNUSED global variables
-                                std::cout << "🔥 OPTIMIZATION: Removing UNUSED GLOBAL variable '" << varName << "'" << std::endl;
-                                removedCount++;
-                                removedUnusedGlobals++;  // Track this
-                            }
-                        } else {
-                            std::cout << "🔥 OPTIMIZATION: Removing unused variable '" << varName << "'" << std::endl;
-                            removedCount++;
-                        }
+                    } else if (writeOnlyVarsToRemove.find(varName) != writeOnlyVarsToRemove.end()) {
+                        // WRITE-ONLY LOCAL VARIABLE - REMOVE DECLARATION
+                        std::cout << "🔥 OPTIMIZATION: Removing write-only LOCAL variable '" << varName << "'" << std::endl;
+                        removedCount++;
+                        // DON'T add to newChildren - this removes the declaration
+                    } else {
+                        // COMPLETELY UNUSED VARIABLE
+                        std::cout << "🔥 OPTIMIZATION: Removing unused variable '" << varName << "'" << std::endl;
+                        removedCount++;
                     }
                 }
-                else if (child->type == ASTNodeType::ASSIGNMENT) {
-                    // Check if this assignment involves global variables
-                    if (child->children.size() > 0 && involvesGlobalVariable(child->children[0])) {
-                        std::string target = getAssignmentTarget(child);
+            }
+            else if (child->type == ASTNodeType::ASSIGNMENT) {
+                std::string target = getAssignmentTarget(child);
+                
+                // Check if this assignment should be removed
+                if (!target.empty() && writeOnlyVarsToRemove.find(target) != writeOnlyVarsToRemove.end()) {
+                    // This assignment is to a write-only variable we're removing - REMOVE IT!
+                    std::cout << "🔥 OPTIMIZATION: Removing assignment to write-only variable '" << target << "'" << std::endl;
+                    removedCount++;
+                    // DON'T add to newChildren - this removes the assignment
+                }
+                else {
+                    // Check if this assignment should be preserved due to side effects
+                    bool hasExternalEffects = false;
+                    if (child->children.size() > 0) {
+                        if (involvesGlobalVariable(child->children[0])) {
+                            hasExternalEffects = true;
+                        }
+                        if (child->children.size() > 1 && hasSideEffectsOrExternalAccess(child->children[1])) {
+                            hasExternalEffects = true;
+                        }
+                    }
+                    
+                    if (hasExternalEffects) {
                         if (!target.empty()) {
-                            std::cout << "💾 PRESERVING assignment to GLOBAL: " << target << std::endl;
-                            preservedGlobalWrites++;
+                            std::cout << "💾 PRESERVING assignment with external effects: " << target << std::endl;
+                            preservedSideEffects++;
                         }
                         newChildren.push_back(child);
                     } else {
-                        // For non-global assignments, use the existing logic
                         if (!isDeadAssignment(child)) {
                             newChildren.push_back(child);
                         } else {
                             std::cout << "🔥 OPTIMIZATION: Removing dead assignment to '"
-                                    << getAssignmentTarget(child) << "'" << std::endl;
+                                    << target << "'" << std::endl;
                             removedCount++;
                         }
                     }
                 }
-                else if (child->type == ASTNodeType::ROUTINE_DECL ||
-                        child->type == ASTNodeType::ROUTINE_FORWARD_DECL) {
-                    std::string routineName = child->value;
-                    bool isCalled = (calledRoutines.find(routineName) != calledRoutines.end());
-                    if (isCalled || routineName == "main" || routineName == "testRunner") {
-                        newChildren.push_back(child);
-                        preservedRoutines++;
-                        std::cout << "💾 PRESERVING routine: " << routineName
-                                << (isCalled ? " (called)" : " (entry point)") << std::endl;
-                    } else {
-                        std::cout << "🔥 OPTIMIZATION: Removing unused routine '" << routineName << "'" << std::endl;
-                        removedCount++;
-                    }
-                }
-                else {
+            }
+            else if (child->type == ASTNodeType::ROUTINE_DECL ||
+                    child->type == ASTNodeType::ROUTINE_FORWARD_DECL) {
+                std::string routineName = child->value;
+                bool isCalled = (calledRoutines.find(routineName) != calledRoutines.end());
+                if (isCalled || routineName == "main" || routineName == "testRunner") {
                     newChildren.push_back(child);
+                    preservedRoutines++;
+                    std::cout << "💾 PRESERVING routine: " << routineName
+                            << (isCalled ? " (called)" : " (entry point)") << std::endl;
+                } else {
+                    std::cout << "🔥 OPTIMIZATION: Removing unused routine '" << routineName << "'" << std::endl;
+                    removedCount++;
                 }
             }
-            
-            if (removedCount > 0) {
-                node->children = newChildren;
-                std::cout << "🔥 Removed " << removedCount << " unused declaration(s)" << std::endl;
-                if (removedUnusedGlobals > 0) {
-                    std::cout << "🔥 Removed " << removedUnusedGlobals << " UNUSED global variable(s)" << std::endl;
-                }
-                if (preservedRecordFields > 0) {
-                    std::cout << "💾 Preserved " << preservedRecordFields << " used record field(s)" << std::endl;
-                }
-                if (preservedRoutines > 0) {
-                    std::cout << "💾 Preserved " << preservedRoutines << " routine(s)" << std::endl;
-                }
-                if (preservedGlobalWrites > 0) {
-                    std::cout << "💾 Preserved " << preservedGlobalWrites << " global variable assignment(s)" << std::endl;
-                }
+            // Preserve standalone expressions with side effects (like function calls without assignment)
+            else if (hasSideEffectsOrExternalAccess(child)) {
+                newChildren.push_back(child);
+                preservedSideEffects++;
+                std::cout << "💾 PRESERVING expression with side effects/external access" << std::endl;
+            }
+            else {
+                newChildren.push_back(child);
             }
         }
+        
+        if (removedCount > 0) {
+            node->children = newChildren;
+            std::cout << "🔥 Removed " << removedCount << " unused declaration(s)" << std::endl;
+            if (removedUnusedGlobals > 0) {
+                std::cout << "🔥 Removed " << removedUnusedGlobals << " UNUSED global variable(s)" << std::endl;
+            }
+            if (preservedRecordFields > 0) {
+                std::cout << "💾 Preserved " << preservedRecordFields << " used record field(s)" << std::endl;
+            }
+            if (preservedRoutines > 0) {
+                std::cout << "💾 Preserved " << preservedRoutines << " routine(s)" << std::endl;
+            }
+            if (preservedGlobalWrites > 0) {
+                std::cout << "💾 Preserved " << preservedGlobalWrites << " global variable assignment(s)" << std::endl;
+            }
+            if (preservedSideEffects > 0) {
+                std::cout << "💾 Preserved " << preservedSideEffects << " expression(s) with side effects" << std::endl;
+            }
+        }
+    }
     
-    bool isLoopEmpty(std::shared_ptr<ASTNode> loop) {
-        if (!loop || loop->type != ASTNodeType::FOR_LOOP) return false;
-        if (loop->children.size() > 2) {
-            auto body = loop->children[2];
-            if (body && body->type == ASTNodeType::BODY) {
-                return isBodyEmpty(body);
+    void collectCompleteUsage(std::shared_ptr<ASTNode> node) {
+        if (!node) return;
+        
+        // DEBUG: Track which node we're processing
+        std::cout << "🔍 USAGE TRACKING: Processing " << astNodeTypeToString(node->type);
+        if (!node->value.empty()) std::cout << " (" << node->value << ")";
+        std::cout << std::endl;
+        
+        switch (node->type) {
+            case ASTNodeType::IF_STMT:
+                std::cout << "  📊 IF_STMT with " << node->children.size() << " children" << std::endl;
+                if (node->children.size() > 0) {
+                    trackReadsInExpression(node->children[0]); // condition
+                }
+                // Track both branches - they might both be reachable
+                if (node->children.size() > 1) {
+                    std::cout << "  📊 Processing THEN branch" << std::endl;
+                    collectCompleteUsage(node->children[1]); // then branch
+                }
+                if (node->children.size() > 2) {
+                    std::cout << "  📊 Processing ELSE branch" << std::endl;
+                    collectCompleteUsage(node->children[2]); // else branch  
+                }
+                return;
+
+            case ASTNodeType::ASSIGNMENT:
+                std::cout << "  📊 ASSIGNMENT" << std::endl;
+                if (node->children.size() > 0) {
+                    std::string target = getAssignmentTarget(node);
+                    std::cout << "  📝 Assignment target: " << target << std::endl;
+                }
+                if (node->children.size() > 1) {
+                    std::cout << "  📖 Tracking RHS expression" << std::endl;
+                    trackReadsInExpression(node->children[1]);
+                }
+                break;
+                
+            case ASTNodeType::FOR_LOOP:
+                std::cout << "  📊 FOR_LOOP: " << node->value << std::endl;
+                if (node->children.size() > 0) {
+                    trackReadsInExpression(node->children[0]);
+                }
+                break;
+                
+            case ASTNodeType::ROUTINE_CALL:
+                std::cout << "  📊 ROUTINE_CALL: " << node->value << std::endl;
+                if (!node->value.empty()) {
+                    trackRoutineCall(node->value);
+                }
+                if (node->children.size() > 0) {
+                    trackReadsInExpression(node->children[0]);
+                }
+                break;
+                
+            default:
+                if (isExpressionContext(node->type)) {
+                    std::cout << "  📊 Expression context" << std::endl;
+                    trackReadsInExpression(node);
+                }
+                break;
+        }
+        
+        // Only process children for non-IF_STMT nodes
+        if (node->type != ASTNodeType::IF_STMT) {
+            for (auto& child : node->children) {
+                collectCompleteUsage(child);
             }
         }
-        return true;
     }
 
-    bool isWhileLoopEmpty(std::shared_ptr<ASTNode> whileLoop) {
-        if (!whileLoop || whileLoop->type != ASTNodeType::WHILE_LOOP) return false;
-        if (whileLoop->children.size() > 1) {
-            auto body = whileLoop->children[1];
-            if (body && body->type == ASTNodeType::BODY) {
-                return isBodyEmpty(body);
+    void trackReadsInExpression(std::shared_ptr<ASTNode> expr) {
+        if (!expr) return;
+        
+        std::cout << "  📖 EXPRESSION: " << astNodeTypeToString(expr->type);
+        if (!expr->value.empty()) std::cout << " (" << expr->value << ")";
+        std::cout << std::endl;
+        
+        if (expr->type == ASTNodeType::IDENTIFIER) {
+            readVariables.insert(expr->value);
+            std::cout << "  ✅📖 TRACKED READ: " << expr->value << std::endl;
+        }
+        else if (expr->type == ASTNodeType::MEMBER_ACCESS) {
+            readVariables.insert(expr->value);
+            std::cout << "  ✅📖 TRACKED READ (field): " << expr->value << std::endl;
+            if (expr->children.size() > 0) {
+                trackReadsInExpression(expr->children[0]);
             }
         }
-        return true;
+        else if (expr->type == ASTNodeType::ARRAY_ACCESS) {
+            if (expr->children.size() > 0 && expr->children[0]) {
+                trackReadsInExpression(expr->children[0]);
+            }
+        }
+        
+        for (auto& child : expr->children) {
+            trackReadsInExpression(child);
+        }
     }
-
     bool isBodyEmpty(std::shared_ptr<ASTNode> body) {
         if (!body || body->type != ASTNodeType::BODY) return true;
         for (auto& child : body->children) {
@@ -1183,69 +1454,6 @@ private:
         return node->value; // fallback
     }
 
-    //   isDeadAssignment TO PRESERVE GLOBAL ASSIGNMENTS
-    bool isDeadAssignment(std::shared_ptr<ASTNode> assignment) {
-        if (!assignment || assignment->type != ASTNodeType::ASSIGNMENT) return false;
-        
-        std::string target = getAssignmentTarget(assignment);
-        if (target.empty()) return false;
-        
-        // NEVER remove assignments to global variables
-        if (globalVariables.find(target) != globalVariables.end()) {
-            return false;
-        }
-        
-        // Only consider it dead if it's a local variable that's never read
-        return (readVariables.find(target) == readVariables.end());
-    }
-
-    // ALSO   optimizeDeadCode TO PRESERVE GLOBAL ASSIGNMENTS
-    void optimizeLoopBody(std::shared_ptr<ASTNode> forLoop) {
-        if (!forLoop || forLoop->type != ASTNodeType::FOR_LOOP) return;
-        
-        // Check if loop contains global variable operations
-        bool hasGlobalOperations = checkForGlobalOperationsInLoop(forLoop);
-        
-        if (forLoop->children.size() > 2) {
-            auto body = forLoop->children[2];
-            if (body && body->type == ASTNodeType::BODY) {
-                // If loop has global operations, be VERY conservative
-                if (hasGlobalOperations) {
-                    std::cout << "💾 PRESERVING loop with global operations" << std::endl;
-                    // Only do very safe optimizations, no aggressive removal
-                    optimizeDeadCode(body);
-                } else {
-                    // For loops without globals, use normal optimization
-                    if (isBodyEmpty(body)) {
-                        std::cout << "🔥 OPTIMIZATION: Removing empty FOR loop" << std::endl;
-                        return;
-                    }
-                    optimizeDeadCode(body);
-                }
-            }
-        }
-    }
-
-    bool checkForGlobalOperationsInLoop(std::shared_ptr<ASTNode> loop) {
-        if (!loop) return false;
-        
-        // Check if any assignment in the loop involves global variables
-        if (loop->type == ASTNodeType::ASSIGNMENT) {
-            std::string target = getAssignmentTarget(loop);
-            if (globalVariables.find(target) != globalVariables.end()) {
-                return true;
-            }
-        }
-        
-        // Recursively check children
-        for (auto& child : loop->children) {
-            if (checkForGlobalOperationsInLoop(child)) {
-                return true;
-            }
-        }
-        
-        return false;
-    }
 
     void optimizeDeadCode(std::shared_ptr<ASTNode> node) {
         // Only remove obviously dead code, preserve everything else
@@ -1376,5 +1584,5 @@ private:
         std::cout << "WARNING: " << message << std::endl;
     }
 };
-
+    
 #endif

@@ -10,8 +10,12 @@ type Person is record
     var isStudent : boolean;
 end;
 
-routine uselessComputation() : real is
+routine f () is
+    var sdf: integer;
+end
 
+routine uselessComputation() : real is
+    var asdfs: real;
     var i: integer;
     var j: integer;
     var temp: real;
@@ -22,7 +26,7 @@ routine uselessComputation() : real is
     h := 45;
     for i in 1..h loop
         for j in 1..999 loop
-            temp := A[i] * B[j];
+            temp := f();
         end
     end
 
