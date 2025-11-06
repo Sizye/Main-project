@@ -1,0 +1,55 @@
+
+var globalCounter: integer;
+routine deadCodeHeaven() is
+    var totallyUnused : integer;
+    var writeOnlyVar : real;
+    var readButMeaningless : boolean;
+    var i: integer;
+    totallyUnused := 42;
+    
+
+    writeOnlyVar := 3.14;
+    writeOnlyVar := 2.71;
+    
+    var loopResult : integer;
+    loopResult := 0;
+    for i in 1..100 loop
+        loopResult := loopResult + i;
+    end
+    
+
+    readButMeaningless := true;
+    if readButMeaningless then
+        var deadBranchVar : integer;
+        deadBranchVar := 999;
+    else
+        var anotherDeadVar : real;
+        anotherDeadVar := 1.618;
+    end
+    
+end
+
+routine neverCalledRoutine() is
+    var localDeadVar : integer;
+    localDeadVar := 123;
+    print "This never prints!";
+end
+
+routine pureComputationNoSideEffects(x : integer, y : integer) : integer is
+    return x * y + (x - y);
+end
+
+routine sideEffectRoutine() is
+    print "I have side effects!";
+    globalCounter := globalCounter + 1;
+end
+
+routine main() is
+    sideEffectRoutine();
+    
+    var unusedResult : integer;
+    unusedResult := pureComputationNoSideEffects(5, 3);
+    
+    deadCodeHeaven();
+
+end

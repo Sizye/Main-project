@@ -11,17 +11,24 @@ var employees: array[1000] Person;
 routine optimizeHRSystem() is
     var i: integer;
     
-    for i in 0..999 loop
+    for i in 1..999 loop
         employees[i].id := i + 1000;
         employees[i].isManager := (i % 10) = 0;
     end
     
-    for i in 0..999 loop
+    for i in 1..999 loop
         if employees[i].age > 65 then
             print "Retirement eligible";
         end
     end
-    for i in 0..999 loop
+    for i in 1..999 loop
         employees[i].salary := employees[i].salary * 1.05;
+    end
+end
+
+routine main() is
+    optimizeHRSystem();
+    if employees[1].id > 34 then
+        return;
     end
 end

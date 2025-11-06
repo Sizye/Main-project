@@ -14,6 +14,7 @@ end;
 type Company is record
     var departments : array[10] Department;
     var ceo : Person;
+    var asd : array[500] Department;
 end;
 
 var corp : Company;
@@ -21,23 +22,44 @@ var corp : Company;
 routine initializeSystem() is
     var i : integer;
     var j : integer;
-    
+    var sdf : integer;
     corp.ceo.id := 1;
     corp.ceo.height := 1.85;
     corp.ceo.isStudent := false;
     
     for i in 1..10 loop
         corp.departments[i].budget := 100000.0 * i;
-        
+        sdf := 45;
         for j in 1..50 loop
             var empId : integer;
             empId := (i * 100) + j;
-            corp.departments[i].employees[j].id := empId;
+            corp.asd[i].employees[j].id := empId;
             corp.departments[i].employees[j].height := 1.6 + (empId % 10) * 0.05;
         end
     end
 end
 
+
+type Address is record
+    var street : array[40] integer;
+    var city : array[30] integer;
+end;
+
+type Person is record
+    var id : integer;
+    var home : Address;
+end;
+
+var people : array[100] Person;
+
+routine testNestedRecords() is
+    people[1].id := 1;
+    people[1].home.street[1] := 65; 
+    people[101].home.city[1] := 66; 
+    people[0].id := 2;
+end
+
 routine main():integer is
     initializeSystem();
+    testNestedRecords();
 end

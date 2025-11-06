@@ -1,0 +1,363 @@
+type PersonID is integer;
+type SalaryType is real;
+type EmploymentStatus is boolean;
+
+type Person is record
+    var id : PersonID;
+    var name : array[50] integer;
+    var salary : SalaryType;
+    var isEmployed : EmploymentStatus;
+end;
+
+type Department is record
+    var name : array[30] integer;
+    var employees : array[50] Person;
+    var budget : SalaryType;
+end;
+
+type Company is record
+    var name : array[40] integer;
+    var departments : array[10] Department;
+    var revenue : real;
+end;
+
+var globalCompany : Company;
+var peopleRegistry : array[100] Person;
+var systemCounter : integer is 0;
+var piConstant : real is 3.14159;
+var systemActive : boolean is true;
+
+routine calculatePayroll(dept : Department) : real;
+routine processEmployee(emp : Person) : boolean;
+routine companyAnalysis(comp : Company) : real;
+routine factorialMath(n : integer) : integer;
+routine fibonacciSeq(n : integer) : integer;
+
+routine factorialMath(n : integer) : integer is
+    if n <= 1 then
+        return 1;
+    else
+        return n * factorialMath(n - 1);
+    end
+end
+
+routine fibonacciSeq(n : integer) : integer is
+    var a : integer is 0;
+    var b : integer is 1;
+    var temp : integer;
+    var i : integer;
+    
+    if n = 0 then
+        return a;
+    end
+    
+    if n = 1 then
+        return b;
+    end
+    
+    for i in 2..n loop
+        temp := a + b;
+        a := b;
+        b := temp;
+    end
+    
+    return b;
+end
+
+routine processEmployee(emp : Person) : boolean is
+    var isValid : boolean;
+    
+    isValid := (emp.id > 0) and (emp.salary >= 0.0);
+    
+    if isValid then
+        systemCounter := systemCounter + 1;
+        if emp.isEmployed then
+            print "Processing active employee ID:", emp.id;
+        else
+            print "Processing inactive employee ID:", emp.id;
+        end
+    else
+        print "Invalid employee data for ID:", emp.id;
+    end
+    
+    return isValid;
+end
+
+routine calculatePayroll(dept : Department) : real is
+    var totalSalary : real;
+    var i : integer;
+    var currentEmployee : Person;
+    
+    totalSalary := 0.0;
+    
+    for i in 1..50 loop
+        currentEmployee := dept.employees[i];
+        if currentEmployee.isEmployed then
+            totalSalary := totalSalary + currentEmployee.salary;
+        end
+    end
+    
+    if totalSalary > dept.budget then
+        print "WARNING: Payroll exceeds department budget!";
+    end
+    
+    return totalSalary;
+end
+
+routine companyAnalysis(comp : Company) : real is
+    var totalRevenue : real;
+    var deptIndex : integer;
+    var payrollCost : real;
+    
+    totalRevenue := comp.revenue;
+    
+    for deptIndex in 1..10 loop
+        payrollCost := calculatePayroll(comp.departments[deptIndex]);
+        totalRevenue := totalRevenue - payrollCost;
+        
+        if totalRevenue < 0.0 then
+            print "Company operating at loss!";
+            return totalRevenue;
+        end
+    end
+    
+    return totalRevenue;
+end
+
+routine initializeTestData() is
+    var i : integer;
+    var j : integer;
+    var employeeCount : integer;
+    
+    employeeCount := 0;
+    
+    for i in 1..100 loop
+        peopleRegistry[i].id := 1000 + i;
+        peopleRegistry[i].salary := 2500.0 + (i % 10) * 100.0;
+        peopleRegistry[i].isEmployed := (i % 4) /= 0;
+        
+        if peopleRegistry[i].isEmployed then
+            employeeCount := employeeCount + 1;
+        end
+    end
+    
+    print "Initialized", employeeCount, "active employees";
+    
+    for i in 1..10 loop
+        globalCompany.departments[i].budget := 50000.0 * i;
+        
+        for j in 1..50 loop
+            var empIndex : integer;
+            empIndex := (i - 1) * 5 + j;
+            if empIndex <= 100 then
+                globalCompany.departments[i].employees[j] := peopleRegistry[empIndex];
+            end
+        end
+    end
+    
+    globalCompany.revenue := 1000000.0;
+end
+
+routine complexConditionTest() is
+    var a : integer;
+    var b : integer;
+    var c : integer;
+    
+    a := 1;
+    while a <= 20 loop
+        b := 1;
+        
+        while b <= 15 loop
+            c := 1;
+            
+            while c <= 10 loop
+                if (a % 2 = 0) and (b % 3 = 0) then
+                    if c % 5 = 0 then
+                        print "Triple condition match:", a, b, c;
+                    else
+                        print "Double condition match:", a, b;
+                    end
+                else if (a + b + c) > 25 then
+                    print "Sum exceeds 25:", a, b, c;
+                else
+                    if (a * b * c) % 7 = 0 then
+                        print "Product divisible by 7:", a, b, c;
+                        end
+                    end
+                end
+                
+                c := c + 1;
+            end
+            
+            b := b + 1;
+        end
+        
+        a := a + 1;
+    end
+    
+end
+
+routine arrayProcessingTest() is
+    var dataArray : array[50] real;
+    var i : integer;
+    var j : integer;
+    var temp : real;
+    
+    for i in 1..50 loop
+        dataArray[i] := i * piConstant + factorialMath(i % 10);
+    end
+    
+    for i in 1..49 loop
+        for j in i+1..50 loop
+            if dataArray[i] > dataArray[j] then
+                temp := dataArray[i];
+                dataArray[i] := dataArray[j];
+                dataArray[j] := temp;
+            end
+        end
+    end
+    
+    var sum : real;
+    sum := 0.0;
+    for i in 1..50 loop
+        sum := sum + dataArray[i];
+    end
+    
+    print "Sorted array sum:", sum;
+    print "Array min:", dataArray[1];
+    print "Array max:", dataArray[50];
+end
+
+routine recursiveStressTest() is
+    var depth : integer;
+    var result : integer;
+    
+    depth := 5;
+    
+    result := factorialMath(depth);
+    print "Factorial of", depth, "is", result;
+    
+    result := fibonacciSeq(depth);
+    print "Fibonacci of", depth, "is", result;
+    
+    var combined : integer;
+    combined := factorialMath(fibonacciSeq(6));
+    print "Factorial of Fibonacci 6:", combined;
+end
+
+routine mixedTypeOperations() is
+    var intVal : integer;
+    var realVal : real;
+    var boolVal : boolean;
+    
+    intVal := 42;
+    realVal := 3.14;
+    boolVal := true;
+    
+    var resultReal : real;
+    resultReal := intVal + realVal;
+    
+    if boolVal then
+        resultReal := resultReal * 2.0;
+    else
+        resultReal := resultReal / 2.0;
+    end
+    
+    var resultInt : integer;
+    resultInt := intVal + realVal;
+    
+    if resultInt > 40 then
+        boolVal := true;
+    else
+        boolVal := false;
+    end
+    
+    print "Mixed operations - Real:", resultReal, "Int:", resultInt, "Bool:", boolVal;
+end
+
+routine scopeShadowingTest() is
+    var counter : integer;
+    counter := 10;
+    
+    print "Outer counter:", counter;
+    
+    var i : integer;
+    for i in 1..5 loop
+        var counter : integer;
+        counter := i * 2;
+        print "Inner counter:", counter;
+    end
+    
+    print "Outer counter after loop:", counter;
+    
+    if counter > 5 then
+        var counter : real;
+        counter := counter * piConstant;
+        print "If-scope counter (real):", counter;
+    end
+    
+    print "Final outer counter:", counter;
+end
+
+routine ultimateCompilerTest() is
+    var startTime : integer;
+    var profit : real;
+    var success : boolean;
+    
+    print "=== ULTIMATE SPEC-COMPLIANT COMPILER TEST ===";
+    print "Testing all language features from the specification...";
+    
+    systemCounter := 0;
+    startTime := systemCounter;
+    
+    initializeTestData();
+    
+    complexConditionTest();
+    arrayProcessingTest();
+    recursiveStressTest();
+    mixedTypeOperations();
+    scopeShadowingTest();
+    
+    profit := companyAnalysis(globalCompany);
+    print "Company profit after analysis:", profit;
+    
+    var employeesProcessed : integer;
+    employeesProcessed := 0;
+    
+    var k : integer;
+    for k in 1..100 loop
+        success := processEmployee(peopleRegistry[k]);
+        if success then
+            employeesProcessed := employeesProcessed + 1;
+        end
+    end
+    
+    print "Total employees processed:", employeesProcessed;
+    print "System counter value:", systemCounter;
+    
+    var finalCheck : boolean;
+    finalCheck := (systemCounter > 0) and (profit > -1000000.0);
+    
+    if finalCheck then
+        print "🎉 ALL TESTS PASSED! COMPILER IS SPEC-PERFECT!";
+        print "🏆 YOUR COMPILER HANDLES EVERY LANGUAGE FEATURE FLAWLESSLY!";
+    else
+        print "⚠️  Some tests may need review";
+        print "🔧 Check compiler implementation against specification";
+    end
+    
+    print "=== ULTIMATE TEST COMPLETE ===";
+end
+
+routine main() is
+    print "🔥 ULTIMATE SPEC-COMPLIANT COMPILER VALIDATION 🔥";
+    print "Testing against exact project specifications...";
+    
+    ultimateCompilerTest();
+    
+    print "Validation complete!";
+end
+
+routine testRunner() is
+    main();
+end

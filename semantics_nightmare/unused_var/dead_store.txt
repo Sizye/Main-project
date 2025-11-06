@@ -3,17 +3,28 @@ var A: Matrix;
 var B: Matrix;
 var C: Matrix;
 
+type Person is record
+    var id : integer;
+    var name : array[50] integer;
+    var height : real;
+    var isStudent : boolean;
+end;
+
 routine uselessComputation() : real is
+
     var i: integer;
     var j: integer;
     var temp: real;
-    
-    for i in 1..999 loop
+    var h: integer;
+    for i in 1..h loop
+        return;
+    end
+    h := 45;
+    for i in 1..h loop
         for j in 1..999 loop
             temp := A[i] * B[j];
         end
     end
-    
 
     for i in 1..999 loop
         C[i] := i * 2.0;

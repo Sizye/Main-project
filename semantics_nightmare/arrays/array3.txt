@@ -1,7 +1,12 @@
 routine main(data : array[] real, count : integer) : real is
+    var i : integer;
+    for j in 1..size(data) loop
+        i := 34;
+    end
+    i := data[100000000];
     var sum : real is 0.0;
     var avg : real;
-    var i : integer;
+    
     
     if count <= 0 then
         return 0.0;
@@ -9,7 +14,7 @@ routine main(data : array[] real, count : integer) : real is
     
     for i in 1..size(data) loop
         if i <= count then
-            sum := sum + data[i];
+            sum := sum + data[-1];
         end
     end
     

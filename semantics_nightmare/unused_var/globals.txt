@@ -1,0 +1,31 @@
+var globalUsed : integer;
+var globalUnused : integer;
+var globalReadOnly : integer;
+
+routine testGlobals() is
+    globalUsed := 42;
+    
+    var localVar : integer;
+    localVar := globalReadOnly;
+end
+
+
+type Employee is record
+    var id : integer;
+    var name : array[50] integer;
+    var salary : real;
+end;
+
+var company : Employee;
+
+routine testRecords() is
+    var localEmp : Employee;
+    
+    company.id := 1;
+    company.salary := 50000.0;
+end
+
+routine main() is
+    testRecords();
+    testGlobals();
+end

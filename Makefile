@@ -72,8 +72,9 @@ visualize: $(TARGET)
 
 clean:
 	rm -f $(TARGET) $(YACC_OUT) $(YACC_HEADER) $(LEX_OUT)
-	rm -f ast_output.dot ast_tree.png test_program.txt
+	rm -f *.dot ast_output.dot ast_tree.png test_program.txt
 	rm -f *.o
+
 
 # Quick rebuild
 rebuild: clean all

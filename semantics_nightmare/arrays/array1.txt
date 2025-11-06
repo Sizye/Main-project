@@ -1,0 +1,13 @@
+routine processDynamic(data : array[] real, temp : integer) : real is
+    var sum : real;
+    var i : integer;
+    
+    data[-1] := 5.0;
+    data[0] := 10.0;
+    
+    for i in 1..temp loop
+        sum := sum + data[i];
+    end
+    
+    return sum;
+end

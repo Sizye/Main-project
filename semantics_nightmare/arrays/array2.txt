@@ -5,7 +5,7 @@ routine testNegativeIndices() is
     arr[-1] := 100;
     arr[-5] := 200; 
     arr[0] := 300;
-    
+    arr[11] := 500;
 
     arr[1] := 400;
     arr[10] := 500;
