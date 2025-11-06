@@ -1,5 +1,5 @@
-type Matrix is array[100] real;
-type Vector is array[100] real;
+type Vector is array[50] real;
+type Matrix is array[150] Vector;
 type SDFDF is real;
 
 var as: SDFDF;
@@ -14,19 +14,19 @@ routine matrixMultiply() is
     var j: integer; 
     var k: integer;
     as := 0;
-    for i in 0..99 loop
-        for j in 0..99 loop
+    for i in 1..150 loop
+        for j in 1..50 loop
             temp := 0.0;
-            for k in 0..99 loop
+            for k in 1..150 loop
                 temp := temp + A[i][k] * B[k][j];
             end
             C[i][j] := temp;
         end
     end
     
-    A[0][0] := 1.0;
+    A[1][1] := 1.0;
     A[99][99] := 1.0;
-    B[0][99] := 2.0;
+    B[1][99] := 2.0;
     C[50][50] := 3.0;
 end
 
