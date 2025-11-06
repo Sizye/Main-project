@@ -45,10 +45,6 @@ type Address is record
     var city : array[30] integer;
 end;
 
-type Person is record
-    var id : integer;
-    var home : Address;
-end;
 
 var people : array[100] Person;
 
