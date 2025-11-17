@@ -1,0 +1,48 @@
+type Employee is record
+    var id: integer;
+    var name: array[50] integer;
+    var salary: real;
+    var isActive: boolean;
+end;
+
+type Department is record
+    var name: array[30] integer;
+    var employees: array[20] Employee;
+    var budget: real;
+end;
+
+var company: Department;
+var unusedGlobal: integer;
+
+routine initializeCompany() is
+    var i: integer;
+    var j: integer;
+    var writeOnlyLocal: real;
+    
+    company.budget := 500000.0;
+    writeOnlyLocal := 3.14;
+    
+    for i in 1..10 loop
+        company.employees[i].id := i * 100;
+        company.employees[i].salary := 50000.0 + (i * 1000.0);
+        company.employees[i].isActive := true;
+        
+        for j in 1..5 loop
+            var tempId: integer;
+            tempId := (i * 100) + j;
+            company.employees[i].id := tempId;  
+        end
+    end
+end
+
+routine unusedRoutine() is
+    var deadVar: integer;
+    deadVar := 999;
+    print "Never called!";
+end
+
+routine main() is
+    initializeCompany();
+    var unusedResult: integer;
+    unusedResult := 42;
+end

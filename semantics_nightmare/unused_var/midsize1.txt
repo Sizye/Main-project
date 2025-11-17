@@ -1,0 +1,46 @@
+var globalCounter: integer;
+
+routine sideEffectFunction(): integer is
+    globalCounter := globalCounter + 1;
+    print "Side effect executed!";
+    return 100;
+end
+
+routine pureFunction(x: integer, y: integer): integer is
+    return x * y + (x - y);
+end
+
+routine complexLogic() is
+    var condition: boolean;
+    var result: integer;
+    var writeOnly: real;
+    
+    condition := true;
+    writeOnly := 2.71;
+
+    result := sideEffectFunction();  
+    
+    if condition then
+        var deadInIf: integer;
+        deadInIf := 123;
+        result := pureFunction(5, 3);
+    else
+        var deadInElse: real;
+        deadInElse := 1.618;
+    end
+
+    print result;
+end
+
+routine neverCalled() is
+    var localDead: integer;
+    localDead := 456;
+    print "This never runs!";
+end
+
+routine main() is
+    complexLogic();
+
+    var unused: integer;
+    unused := sideEffectFunction();
+end

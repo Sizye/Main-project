@@ -73,6 +73,8 @@ visualize: $(TARGET)
 clean:
 	rm -f $(TARGET) $(YACC_OUT) $(YACC_HEADER) $(LEX_OUT)
 	rm -f *.dot ast_output.dot ast_tree.png test_program.txt
+	find . -name "*.dot" -type f -delete
+	echo "NUKED all .dot files recursively!"
 	rm -f *.o
 
 

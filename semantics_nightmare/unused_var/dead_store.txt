@@ -11,7 +11,7 @@ type Person is record
 end;
 
 routine f () is
-    var sdf: integer;
+    print "sdfdf";
 end
 
 routine uselessComputation() : real is

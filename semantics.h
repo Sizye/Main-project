@@ -9,6 +9,7 @@
 #include <set>
 #include <map>
 // TODO: for, while loops and empty if branches proper removal
+// TODO: DO NOT CONFUSE RECORD FIELDS DECLARATIONS FROM VARIABLE DECLARATIONS!!!
 class SemanticAnalyzer {
 private:
     // ========== CORE DATA STRUCTURES ==========
