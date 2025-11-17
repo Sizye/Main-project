@@ -1,6 +1,7 @@
 
    routine main(): integer is
-   var a: integer is 10;
-   var b: integer is 20;
-    return b;
+    var counter: integer is 1;
+    counter := counter + 1;
+    counter := counter * 3;
+    return counter;
 end

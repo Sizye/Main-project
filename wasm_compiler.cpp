@@ -725,6 +725,9 @@ void WasmCompiler::generateExpression(std::vector<uint8_t>& funcBody, std::share
             std::cout << "    🔧 Generated i32.const " << boolValue << " (bool: " << expr->value << ")" << std::endl;
             break;
         }
+        case ASTNodeType::BINARY_OP:
+            generateBinaryOperation(funcBody, expr, mainFunc);
+            break;
         case ASTNodeType::LITERAL_REAL:
             generateRealLiteral(funcBody, expr->value);
             break;
@@ -738,6 +741,46 @@ void WasmCompiler::generateExpression(std::vector<uint8_t>& funcBody, std::share
             funcBody.push_back(0x41); // i32.const 0
             writeLeb128(funcBody, 0);
             break;
+    }
+}
+void WasmCompiler::generateBinaryOperation(std::vector<uint8_t>& funcBody, std::shared_ptr<ASTNode> binaryOp, std::shared_ptr<ASTNode> mainFunc) {
+    if (binaryOp->children.size() < 2) {
+        std::cout << "    ❌ Binary operation missing operands!" << std::endl;
+        return;
+    }
+    
+    auto left = binaryOp->children[0];
+    auto right = binaryOp->children[1];
+    
+    std::cout << "    🔧 Generating binary operation: " << binaryOp->value << std::endl;
+    std::cout << "      Left: " << astNodeTypeToString(left->type) << " '" << left->value << "'" << std::endl;
+    std::cout << "      Right: " << astNodeTypeToString(right->type) << " '" << right->value << "'" << std::endl;
+    
+    // Generate left expression
+    generateExpression(funcBody, left, mainFunc);
+    
+    // Generate right expression  
+    generateExpression(funcBody, right, mainFunc);
+    
+    // Generate the operation based on the operator
+    std::string op = binaryOp->value;
+    
+    // TODO: Add type detection - for now assume all integers
+    if (op == "+") {
+        funcBody.push_back(0x6a); // i32.add
+        std::cout << "    🔧 Generated i32.add" << std::endl;
+    } else if (op == "-") {
+        funcBody.push_back(0x6b); // i32.sub
+        std::cout << "    🔧 Generated i32.sub" << std::endl;
+    } else if (op == "*") {
+        funcBody.push_back(0x6c); // i32.mul
+        std::cout << "    🔧 Generated i32.mul" << std::endl;
+    } else if (op == "/") {
+        funcBody.push_back(0x6d); // i32.div_s
+        std::cout << "    🔧 Generated i32.div_s" << std::endl;
+    } else {
+        std::cout << "    ⚠️  Unhandled binary operator: " << op << std::endl;
+        funcBody.push_back(0x6a); // Default to add
     }
 }
 void WasmCompiler::generateRealLiteral(std::vector<uint8_t>& funcBody, const std::string& value) {

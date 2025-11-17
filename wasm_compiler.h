@@ -56,6 +56,7 @@ private:
     void generateAssignment(std::vector<uint8_t>& funcBody, std::shared_ptr<ASTNode> assignment, std::shared_ptr<ASTNode> mainFunc);
     void generateReturnStatement(std::vector<uint8_t>& funcBody, std::shared_ptr<ASTNode> returnStmt, std::shared_ptr<ASTNode> mainFunc);
     void generateRealLiteral(std::vector<uint8_t>& funcBody, const std::string& value);
+    void generateBinaryOperation(std::vector<uint8_t>& funcBody, std::shared_ptr<ASTNode> binaryOp, std::shared_ptr<ASTNode> mainFunc);
 
     uint8_t inferLocalVariableType(std::shared_ptr<ASTNode> varDecl);
     void writeLeb128(std::vector<uint8_t>& vec, uint32_t value);
