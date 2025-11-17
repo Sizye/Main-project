@@ -653,6 +653,8 @@ void WasmCompiler::generateLocalVariableInitialization(std::vector<uint8_t>& fun
 void WasmCompiler::generateMainLogic(std::vector<uint8_t>& funcBody, std::shared_ptr<ASTNode> mainFunc) {
     std::cout << "  🔧 Generating main logic..." << std::endl;
     
+    bool hasReturn = false;
+    
     // Find the BODY node
     for (auto& child : mainFunc->children) {
         if (child && child->type == ASTNodeType::BODY) {
@@ -666,6 +668,7 @@ void WasmCompiler::generateMainLogic(std::vector<uint8_t>& funcBody, std::shared
                         break;
                     case ASTNodeType::RETURN_STMT:
                         generateReturnStatement(funcBody, stmt, mainFunc);
+                        hasReturn = true;
                         break;
                     case ASTNodeType::VAR_DECL:
                         // Already handled in initialization - skip
@@ -679,6 +682,31 @@ void WasmCompiler::generateMainLogic(std::vector<uint8_t>& funcBody, std::shared
             break;
         }
     }
+    
+    // If no explicit return statement, generate default return value based on return type
+    if (!hasReturn) {
+        auto returnTypes = analyzeReturnType(mainFunc);
+        if (!returnTypes.empty()) {
+            uint8_t returnType = returnTypes[0];
+            std::cout << "  🔧 No return statement found - generating default return for type 0x" 
+                      << std::hex << (int)returnType << std::dec << std::endl;
+            
+            switch (returnType) {
+                case 0x7c: // f64
+                    generateRealLiteral(funcBody, "0.0");
+                    break;
+                case 0x7f: // i32
+                default:
+                    funcBody.push_back(0x41); // i32.const 0
+                    writeLeb128(funcBody, 0);
+                    break;
+            }
+        } else {
+            // No return type - use i32 default
+            funcBody.push_back(0x41); // i32.const 0
+            writeLeb128(funcBody, 0);
+        }
+    }
 }
 
 void WasmCompiler::generateExpression(std::vector<uint8_t>& funcBody, std::shared_ptr<ASTNode> expr, std::shared_ptr<ASTNode> mainFunc) {
@@ -690,13 +718,16 @@ void WasmCompiler::generateExpression(std::vector<uint8_t>& funcBody, std::share
             writeLeb128(funcBody, std::stoi(expr->value));
             std::cout << "    🔧 Generated i32.const " << expr->value << std::endl;
             break;
-        case ASTNodeType::LITERAL_BOOL :{
+        case ASTNodeType::LITERAL_BOOL: {
             funcBody.push_back(0x41); // i32.const (WASM uses i32 for bool)
             int boolValue = (expr->value == "true") ? 1 : 0;
             writeLeb128(funcBody, boolValue);
             std::cout << "    🔧 Generated i32.const " << boolValue << " (bool: " << expr->value << ")" << std::endl;
             break;
         }
+        case ASTNodeType::LITERAL_REAL:
+            generateRealLiteral(funcBody, expr->value);
+            break;
         case ASTNodeType::IDENTIFIER:
             generateVariableLoad(funcBody, expr->value, mainFunc);
             break;
@@ -709,6 +740,32 @@ void WasmCompiler::generateExpression(std::vector<uint8_t>& funcBody, std::share
             break;
     }
 }
+void WasmCompiler::generateRealLiteral(std::vector<uint8_t>& funcBody, const std::string& value) {
+    funcBody.push_back(0x44); // f64.const opcode
+    
+    try {
+        double realValue = std::stod(value);
+        
+        // Convert double to 8 bytes (IEEE 754)
+        uint64_t bits;
+        memcpy(&bits, &realValue, sizeof(bits));
+        
+        // Write little-endian bytes
+        for (int i = 0; i < 8; i++) {
+            funcBody.push_back((bits >> (i * 8)) & 0xFF);
+        }
+        
+        std::cout << "    🔧 Generated f64.const " << realValue << std::endl;
+        
+    } catch (...) {
+        std::cout << "    ❌ Failed to parse real: " << value << " - using 0.0" << std::endl;
+        // Write 0.0 as double
+        for (int i = 0; i < 8; i++) {
+            funcBody.push_back(0x00);
+        }
+    }
+}
+
 void WasmCompiler::generateVariableLoad(std::vector<uint8_t>& funcBody, const std::string& varName, std::shared_ptr<ASTNode> mainFunc) {
     if (localVarIndices.find(varName) != localVarIndices.end()) {
         // It's a local variable
@@ -747,7 +804,37 @@ void WasmCompiler::generateAssignment(std::vector<uint8_t>& funcBody, std::share
 void WasmCompiler::generateReturnStatement(std::vector<uint8_t>& funcBody, std::shared_ptr<ASTNode> returnStmt, std::shared_ptr<ASTNode> mainFunc) {
     if (!returnStmt->children.empty()) {
         auto returnExpr = returnStmt->children[0];
+        
+        // Get the expected return type to ensure consistency
+        auto returnTypes = analyzeReturnType(mainFunc);
+        uint8_t expectedType = returnTypes.empty() ? 0x7f : returnTypes[0]; // default to i32
+        
         generateExpression(funcBody, returnExpr, mainFunc);
+        
+        // TODO: Add type conversion if needed
+        // For now, we rely on generateExpression to generate the correct type
+        
+        std::cout << "    🔧 Generated return expression (expected type: 0x" 
+                  << std::hex << (int)expectedType << std::dec << ")" << std::endl;
+    } else {
+        // Empty return - generate default value based on return type
+        auto returnTypes = analyzeReturnType(mainFunc);
+        if (!returnTypes.empty()) {
+            uint8_t returnType = returnTypes[0];
+            std::cout << "    🔧 Empty return - generating default value for type 0x" 
+                      << std::hex << (int)returnType << std::dec << std::endl;
+            
+            switch (returnType) {
+                case 0x7c: // f64
+                    generateRealLiteral(funcBody, "0.0");
+                    break;
+                case 0x7f: // i32
+                default:
+                    funcBody.push_back(0x41); // i32.const 0
+                    writeLeb128(funcBody, 0);
+                    break;
+            }
+        }
     }
     // Return is implicit in WASM - value is left on stack
 }
@@ -832,6 +919,19 @@ int WasmCompiler::extractIntegerFromReturn(std::shared_ptr<ASTNode> mainFunc) {
         return value;
     }
     
+    // Handle real literals - for extraction purposes, we can return the integer part
+    if (returnExpr->type == ASTNodeType::LITERAL_REAL) {
+        try {
+            // For extraction, we return integer part, but codegen will use the actual real value
+            double realValue = std::stod(returnExpr->value);
+            std::cout << "✅ EXTRACTED REAL: " << realValue << " (using integer part for extraction)" << std::endl;
+            return static_cast<int>(realValue);
+        } catch (...) {
+            std::cout << "❌ Failed to parse real: " << returnExpr->value << std::endl;
+            return 42;
+        }
+    }
+    
     // If we're returning a parameter (IDENTIFIER), we can't extract a hardcoded value!
     if (returnExpr->type == ASTNodeType::IDENTIFIER) {
         std::cout << "✅ Returning parameter: " << returnExpr->value << " - no hardcoded value needed!" << std::endl;
@@ -848,7 +948,7 @@ int WasmCompiler::extractIntegerFromReturn(std::shared_ptr<ASTNode> mainFunc) {
             return 42;
         }
     } else {
-        std::cout << "❌ Expected LITERAL_INT, LITERAL_BOOL or IDENTIFIER, got: " << astNodeTypeToString(returnExpr->type) << std::endl;
+        std::cout << "❌ Expected LITERAL_INT, LITERAL_BOOL, LITERAL_REAL or IDENTIFIER, got: " << astNodeTypeToString(returnExpr->type) << std::endl;
         return 42;
     }
 }
