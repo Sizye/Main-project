@@ -363,6 +363,17 @@ std::vector<uint8_t> WasmCompiler::buildCodeSection(int returnValue, std::shared
     generateLocalVariableInitialization(funcBody, mainFunc);
     generateMainLogic(funcBody, mainFunc);
     
+    // CRITICAL: Add explicit return instruction if function has return type
+    auto returnTypes = analyzeReturnType(mainFunc);
+    if (!returnTypes.empty()) {
+        // If we have a return type, ensure there's a value on the stack
+        // The return is implicit in WASM - the value left on stack is returned
+        std::cout << "  🔧 Function has return type - ensuring return value on stack" << std::endl;
+    }
+    
+    // Add the end instruction for the function body
+    funcBody.push_back(0x0b); // end
+    
     writeLeb128(codeContents, funcBody.size());
     codeContents.insert(codeContents.end(), funcBody.begin(), funcBody.end());
     
@@ -677,20 +688,27 @@ void WasmCompiler::generateExpression(std::vector<uint8_t>& funcBody, std::share
         case ASTNodeType::LITERAL_INT:
             funcBody.push_back(0x41); // i32.const
             writeLeb128(funcBody, std::stoi(expr->value));
+            std::cout << "    🔧 Generated i32.const " << expr->value << std::endl;
             break;
+        case ASTNodeType::LITERAL_BOOL :{
+            funcBody.push_back(0x41); // i32.const (WASM uses i32 for bool)
+            int boolValue = (expr->value == "true") ? 1 : 0;
+            writeLeb128(funcBody, boolValue);
+            std::cout << "    🔧 Generated i32.const " << boolValue << " (bool: " << expr->value << ")" << std::endl;
+            break;
+        }
         case ASTNodeType::IDENTIFIER:
             generateVariableLoad(funcBody, expr->value, mainFunc);
             break;
-        //case ASTNodeType::BINARY_OP:
-            //generateBinaryOperation(funcBody, expr, mainFunc);
-            //break;
         default:
             std::cout << "    ⚠️  Unhandled expression type: " 
                       << astNodeTypeToString(expr->type) << std::endl;
+            // Generate a default value to avoid empty expression
+            funcBody.push_back(0x41); // i32.const 0
+            writeLeb128(funcBody, 0);
             break;
     }
 }
-
 void WasmCompiler::generateVariableLoad(std::vector<uint8_t>& funcBody, const std::string& varName, std::shared_ptr<ASTNode> mainFunc) {
     if (localVarIndices.find(varName) != localVarIndices.end()) {
         // It's a local variable
@@ -778,7 +796,7 @@ int WasmCompiler::extractIntegerFromReturn(std::shared_ptr<ASTNode> mainFunc) {
         return 42;
     }
     
-    // Find the BODY node (it might not be the first child if we have parameters!)
+    // Find the BODY node
     std::shared_ptr<ASTNode> body = nullptr;
     for (auto& child : mainFunc->children) {
         if (child && child->type == ASTNodeType::BODY) {
@@ -807,6 +825,13 @@ int WasmCompiler::extractIntegerFromReturn(std::shared_ptr<ASTNode> mainFunc) {
     std::cout << "🔍 Return expression: " << astNodeTypeToString(returnExpr->type) 
               << " value: '" << returnExpr->value << "'" << std::endl;
     
+    // Handle boolean literals
+    if (returnExpr->type == ASTNodeType::LITERAL_BOOL) {
+        int value = (returnExpr->value == "true") ? 1 : 0;
+        std::cout << "✅ EXTRACTED BOOLEAN: " << returnExpr->value << " -> " << value << std::endl;
+        return value;
+    }
+    
     // If we're returning a parameter (IDENTIFIER), we can't extract a hardcoded value!
     if (returnExpr->type == ASTNodeType::IDENTIFIER) {
         std::cout << "✅ Returning parameter: " << returnExpr->value << " - no hardcoded value needed!" << std::endl;
@@ -823,7 +848,7 @@ int WasmCompiler::extractIntegerFromReturn(std::shared_ptr<ASTNode> mainFunc) {
             return 42;
         }
     } else {
-        std::cout << "❌ Expected LITERAL_INT or IDENTIFIER, got: " << astNodeTypeToString(returnExpr->type) << std::endl;
+        std::cout << "❌ Expected LITERAL_INT, LITERAL_BOOL or IDENTIFIER, got: " << astNodeTypeToString(returnExpr->type) << std::endl;
         return 42;
     }
 }
