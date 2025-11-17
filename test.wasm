@@ -1,0 +1,1 @@
+routine main(): real is var y: integer; var z: real is 3.14; z:= 3; return z; end

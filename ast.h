@@ -31,7 +31,6 @@ public:
         for (auto& c : children) if (c) c->print(d + 1);
     }
     std::string toDot() const;
-private:
     std::string typeToStr() const;
 };
 

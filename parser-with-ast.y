@@ -13,7 +13,7 @@
 #include <iostream>
 #include <fstream>
 #include "ast.h"
-
+#include "wasm_compiler.h"
 int yylex();
 
 extern int yylineno;
@@ -961,7 +961,19 @@ int main(int argc, char* argv[]) {
                 
                 printf("\n=== FINAL RESULT ===\n");
                 if (semanticSuccess) {
-                    printf("✓ COMPILATION SUCCESSFUL - NO ERRORS FOUND\n");
+                    printf("\n=== 🚀 STARTING WASM COMPILATION ===\n");
+    
+                    WasmCompiler compiler;
+                    std::string wasmFilename = "output.wasm";
+                    
+                    if (compiler.compile(astRoot, wasmFilename)) {
+                        printf("✅ WASM COMPILATION SUCCESSFUL!\n");
+                        printf("📁 Output: %s\n", wasmFilename.c_str());
+                        printf("💡 You can run it with: wasmtime %s\n", wasmFilename.c_str());
+                    } else {
+                        printf("❌ WASM COMPILATION FAILED\n");
+                        return 1;
+                    }
                     
                     // Print the AST
                     printf("\n=== ABSTRACT SYNTAX TREE ===\n");

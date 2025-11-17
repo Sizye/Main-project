@@ -15,6 +15,7 @@ SEMANTICS_SRC = semantics.h
 YACC_OUT = parser.tab.cpp
 YACC_HEADER = parser.tab.hpp
 LEX_OUT = lex.yy.cpp
+WASM_SRC = wasm_compiler.cpp wasm_compiler.h
 
 # Targets
 TARGET = parser
@@ -24,8 +25,8 @@ TARGET = parser
 all: $(TARGET)
 
 # Build parser from YACC file (now contains main)
-$(TARGET): $(YACC_OUT) $(LEX_OUT) $(AST_SRC) $(SEMANTICS_SRC)
-	$(CXX) $(CXXFLAGS) $(INCLUDES) -o $(TARGET) $(YACC_OUT) $(LEX_OUT) ast.cpp $(LDFLAGS)
+$(TARGET): $(YACC_OUT) $(LEX_OUT) $(AST_SRC) $(SEMANTICS_SRC) $(WASM_SRC)
+	$(CXX) $(CXXFLAGS) $(INCLUDES) -o $(TARGET) $(YACC_OUT) $(LEX_OUT) ast.cpp wasm_compiler.cpp $(LDFLAGS)
 
 $(YACC_OUT) $(YACC_HEADER): $(YACC_SRC)
 	$(YACC) -d -o $(YACC_OUT) $(YACC_SRC)
@@ -34,6 +35,19 @@ $(LEX_OUT): $(LEX_SRC) $(YACC_HEADER)
 	$(LEX) -o $(LEX_OUT) $(LEX_SRC)
 
 # Test with file input
+wasm-test: $(TARGET)
+	@echo "=== TESTING WASM COMPILATION ==="
+	@echo 'var x: integer; routine main() is return 42; end;' > test_wasm.txt
+	@./$(TARGET) test_wasm.txt
+	@if [ -f output.wasm ]; then \
+		echo "✅ WASM file generated!"; \
+		echo "📊 File size:" `wc -c output.wasm`; \
+		echo "🔍 Hex dump:"; \
+		hexdump -C output.wasm | head -20; \
+	else \
+		echo "❌ No WASM file generated"; \
+	fi
+
 test: $(TARGET)
 	@if [ -f test_program.txt ]; then \
 		echo "=== TESTING WITH FILE INPUT ==="; \
@@ -72,10 +86,10 @@ visualize: $(TARGET)
 
 clean:
 	rm -f $(TARGET) $(YACC_OUT) $(YACC_HEADER) $(LEX_OUT)
-	rm -f *.dot ast_output.dot ast_tree.png test_program.txt
+	rm -f *.dot ast_output.dot ast_tree.png test_program.txt test_wasm.txt output.wasm
 	find . -name "*.dot" -type f -delete
-	echo "NUKED all .dot files recursively!"
 	rm -f *.o
+	echo "🧹 Cleaned all generated files!"
 
 
 # Quick rebuild

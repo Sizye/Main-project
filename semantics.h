@@ -1330,6 +1330,13 @@ private:
         std::cout << std::endl;
         
         switch (node->type) {
+            case ASTNodeType::RETURN_STMT:
+                std::cout << "  📊 RETURN_STMT with " << node->children.size() << " children" << std::endl;
+                if (!node->children.empty()) {
+                    std::cout << "  📖 Processing return expression" << std::endl;
+                    trackReadsInExpression(node->children[0]); // Process the return expression
+                }
+                return;
             case ASTNodeType::PRINT_STMT:
                 if (node->children.size() > 0) {
                     // Track ALL identifiers in print statements as READS!
