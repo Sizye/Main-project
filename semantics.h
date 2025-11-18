@@ -926,7 +926,10 @@ private:
                          std::shared_ptr<ASTNode> index, int dimension) {
         if (index && index->type == ASTNodeType::LITERAL_INT) {
             int idx = std::stoi(index->value);
+            std::cout << "🔥 VARIABLE CHECK: " << idx
+                         << " in " << arrayName << std::endl;
             if (idx < 1 || idx > arraySize) {
+                error("Variable '" + std::to_string(idx) + "' may go out of bounds for array '" + arrayName + "' of size " + std::to_string(arraySize));
                 return false;
             } else {
                 return true;
