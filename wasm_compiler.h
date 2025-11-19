@@ -155,6 +155,19 @@ private:
     void generateArrayAccessForRecord(std::vector<uint8_t>& body,
                                                 std::shared_ptr<ASTNode> arrayAccess,
                                                 const FuncInfo& F);
+    std::tuple<int, uint8_t, int> resolveArrayAccessMember(std::vector<uint8_t>& body,
+                                                          std::shared_ptr<ASTNode> arrayAccess,
+                                                          const std::string& fieldName,
+                                                          const FuncInfo& F);
+    void generateSimpleArrayAccess(std::vector<uint8_t>& body,
+                                   std::shared_ptr<ASTNode> arrayRef,
+                                   std::shared_ptr<ASTNode> indexExpr,
+                                   const FuncInfo& F);
+    
+    void generateMemberArrayAccess(std::vector<uint8_t>& body,
+                                   std::shared_ptr<ASTNode> memberAccess,
+                                   std::shared_ptr<ASTNode> indexExpr,
+                                   const FuncInfo& F);
     // Records
     void collectRecordTypes(std::shared_ptr<ASTNode> program);
     std::pair<uint8_t, int> analyzeFieldType(std::shared_ptr<ASTNode> fieldDecl);
