@@ -14,7 +14,7 @@
 - ✅ **Nested function calls** - Functions calling other functions
 - ✅ **Return statements** - `return expression;`
 
-### Type System ⭐ **NEW - Hours of Work!**
+### Type System
 - ✅ **Primitive types**: `integer`, `real`, `boolean`
 - ✅ **Type promotion** in binary operations (REAL > INTEGER > BOOLEAN)
 - ✅ **Type conversions** in assignments:
@@ -102,7 +102,7 @@
 - Basic function returns
 
 ### What You Added Today:
-1. **Complete Type System** ⭐ (Hours of work!)
+1. **Complete Type System**
    - Type promotion
    - Type conversions
    - Assignment semantics
