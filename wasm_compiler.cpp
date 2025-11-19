@@ -18,6 +18,7 @@ static const char* tname(ASTNodeType t) {
         case ASTNodeType::ASSIGNMENT: return "ASSIGNMENT";
         case ASTNodeType::IF_STMT: return "IF_STMT";
         case ASTNodeType::WHILE_LOOP: return "WHILE_LOOP";
+        case ASTNodeType::FOR_LOOP: return "FOR_LOOP";
         case ASTNodeType::RETURN_STMT: return "RETURN_STMT";
         case ASTNodeType::BINARY_OP: return "BINARY_OP";
         case ASTNodeType::UNARY_OP: return "UNARY_OP";
@@ -27,6 +28,7 @@ static const char* tname(ASTNodeType t) {
         case ASTNodeType::IDENTIFIER: return "IDENTIFIER";
         case ASTNodeType::ROUTINE_CALL: return "ROUTINE_CALL";
         case ASTNodeType::ARGUMENT_LIST: return "ARGUMENT_LIST";
+        case ASTNodeType::RANGE: return "RANGE";
         default: return "OTHER";
     }
 }
@@ -46,11 +48,7 @@ bool WasmCompiler::compile(std::shared_ptr<ASTNode> program,
 
     std::vector<uint8_t> mod;
 
-    // Magic + version
-    const uint8_t header[8] = {
-        0x00, 0x61, 0x73, 0x6d, // "\0asm"
-        0x01, 0x00, 0x00, 0x00  // version 1
-    };
+    const uint8_t header[8] = {0x00,0x61,0x73,0x6d,0x01,0x00,0x00,0x00};
     mod.insert(mod.end(), header, header + 8);
 
     auto typeSec = buildTypeSection();
@@ -86,15 +84,14 @@ bool WasmCompiler::collectFunctions(std::shared_ptr<ASTNode> program) {
 
     if (!program || program->type != ASTNodeType::PROGRAM) return false;
 
-    // Gather ROUTINE_DECLs in appearance order
     for (auto& n : program->children) {
         if (!n) continue;
         if (n->type == ASTNodeType::ROUTINE_DECL) {
             FuncInfo F;
             F.name = n->value;
             F.node = n;
-            F.typeIndex = 0; // filled later
-            F.funcIndex = 0; // filled later
+            F.typeIndex = 0;
+            F.funcIndex = 0;
             analyzeFunctionSignature(F);
             funcs.push_back(std::move(F));
         }
@@ -102,14 +99,12 @@ bool WasmCompiler::collectFunctions(std::shared_ptr<ASTNode> program) {
 
     if (funcs.empty()) return false;
 
-    // Assign indices (typeIndex == func index for simplicity)
     for (uint32_t i = 0; i < funcs.size(); ++i) {
         funcs[i].typeIndex = i;
         funcs[i].funcIndex = i;
         funcIndexByName[funcs[i].name] = i;
     }
 
-    // Ensure main exists
     if (!funcIndexByName.count("main")) {
         std::cerr << "❌ main routine not found\n";
         return false;
@@ -120,11 +115,9 @@ bool WasmCompiler::collectFunctions(std::shared_ptr<ASTNode> program) {
 }
 
 void WasmCompiler::analyzeFunctionSignature(FuncInfo& F) {
-    // Default: () -> i32
     F.paramTypes.clear();
     F.resultTypes.clear();
 
-    // Scan children to find PARAMETER_LIST and return type
     std::shared_ptr<ASTNode> params = nullptr;
     std::shared_ptr<ASTNode> retType = nullptr;
 
@@ -135,18 +128,15 @@ void WasmCompiler::analyzeFunctionSignature(FuncInfo& F) {
                  ch->type == ASTNodeType::USER_TYPE) retType = ch;
     }
 
-    // Params
     if (params) {
         for (auto& p : params->children) {
             if (!p || p->type != ASTNodeType::PARAMETER) continue;
-            // find the type child
-            uint8_t wt = 0x7f; // default i32
+            uint8_t wt = 0x7f;
             for (auto& pc : p->children) {
                 if (!pc) continue;
                 if (pc->type == ASTNodeType::PRIMITIVE_TYPE) {
                     wt = mapPrimitiveToWasm(pc->value);
                 } else if (pc->type == ASTNodeType::USER_TYPE) {
-                    // user-defined primitive aliases not lowered yet; default i32
                     wt = 0x7f;
                 }
             }
@@ -154,18 +144,16 @@ void WasmCompiler::analyzeFunctionSignature(FuncInfo& F) {
         }
     }
 
-    // Result
     if (retType) {
         F.resultTypes.push_back(mapPrimitiveToWasm(retType->value));
     } else {
-        // Default i32 (your tests use integer)
         F.resultTypes.push_back(0x7f);
     }
 }
 
 uint8_t WasmCompiler::mapPrimitiveToWasm(const std::string& tname) {
-    if (tname == "integer" || tname == "boolean") return 0x7f; // i32
-    if (tname == "real") return 0x7c; // f64
+    if (tname == "integer" || tname == "boolean") return 0x7f;
+    if (tname == "real") return 0x7c;
     return 0x7f;
 }
 
@@ -194,14 +182,11 @@ void WasmCompiler::writeString(std::vector<uint8_t>& buf, const std::string& s) 
 std::vector<uint8_t> WasmCompiler::buildTypeSection() {
     std::vector<uint8_t> payload;
 
-    // one func type per routine
     writeLeb128(payload, static_cast<uint32_t>(funcs.size()));
     for (auto& F : funcs) {
-        payload.push_back(0x60); // func
-        // params
+        payload.push_back(0x60);
         writeLeb128(payload, static_cast<uint32_t>(F.paramTypes.size()));
         for (auto t : F.paramTypes) payload.push_back(t);
-        // results
         writeLeb128(payload, static_cast<uint32_t>(F.resultTypes.size()));
         for (auto t : F.resultTypes) payload.push_back(t);
     }
@@ -215,9 +200,9 @@ std::vector<uint8_t> WasmCompiler::buildTypeSection() {
 
 std::vector<uint8_t> WasmCompiler::buildFunctionSection() {
     std::vector<uint8_t> payload;
-    writeLeb128(payload, static_cast<uint32_t>(funcs.size())); // count
+    writeLeb128(payload, static_cast<uint32_t>(funcs.size()));
     for (auto& F : funcs) {
-        writeLeb128(payload, F.typeIndex); // type index == func index here
+        writeLeb128(payload, F.typeIndex);
     }
 
     std::vector<uint8_t> sec;
@@ -230,10 +215,9 @@ std::vector<uint8_t> WasmCompiler::buildFunctionSection() {
 std::vector<uint8_t> WasmCompiler::buildExportSection() {
     std::vector<uint8_t> payload;
 
-    // only export "main"
     writeLeb128(payload, 1);
     writeString(payload, "main");
-    payload.push_back(0x00); // kind: func
+    payload.push_back(0x00);
     writeLeb128(payload, funcIndexByName["main"]);
 
     std::vector<uint8_t> sec;
@@ -246,37 +230,29 @@ std::vector<uint8_t> WasmCompiler::buildExportSection() {
 std::vector<uint8_t> WasmCompiler::buildCodeSection() {
     std::vector<uint8_t> payload;
 
-    // function count
     writeLeb128(payload, static_cast<uint32_t>(funcs.size()));
 
     for (auto& F : funcs) {
-        // Build one function body
         std::vector<uint8_t> body;
 
         resetLocals();
-        addParametersToLocals(F); // params occupy local indices 0..n-1
+        addParametersToLocals(F);
 
-        // locals header (only VAR_DECL locals, not params)
         auto localsHeader = analyzeLocalVariables(F);
         body.insert(body.end(), localsHeader.begin(), localsHeader.end());
 
-        // local initializers
         generateLocalInitializers(body, F);
 
-        // body stmts
         generateFunctionBody(body, F);
 
-        // fallback: if path reaches end without return
         if (!F.resultTypes.empty()) {
-            // default return 0 / 0.0
             if (F.resultTypes[0] == 0x7f) emitI32Const(body, 0);
             else                          emitF64Const(body, 0.0);
-            body.push_back(0x0f); // return
+            body.push_back(0x0f);
         }
 
-        body.push_back(0x0b); // end
+        body.push_back(0x0b);
 
-        // prepend size
         std::vector<uint8_t> entry;
         writeLeb128(entry, static_cast<uint32_t>(body.size()));
         entry.insert(entry.end(), body.begin(), body.end());
@@ -301,7 +277,6 @@ void WasmCompiler::resetLocals() {
 }
 
 void WasmCompiler::addParametersToLocals(const FuncInfo& F) {
-    // parameters become locals 0..n-1
     std::shared_ptr<ASTNode> params = nullptr;
     for (auto& ch : F.node->children) {
         if (ch && ch->type == ASTNodeType::PARAMETER_LIST) { params = ch; break; }
@@ -331,7 +306,7 @@ std::vector<uint8_t> WasmCompiler::analyzeLocalVariables(const FuncInfo& F) {
     for (auto& s : bodyNode->children) {
         if (!s || s->type != ASTNodeType::VAR_DECL) continue;
         const std::string& name = s->value;
-        if (localVarIndices.count(name)) continue; // skip params
+        if (localVarIndices.count(name)) continue;
         localVarIndices[name] = nextLocalIndex++;
         uint8_t wt = 0x7f;
         if (!s->children.empty() && s->children[0] &&
@@ -362,10 +337,9 @@ void WasmCompiler::generateLocalInitializers(std::vector<uint8_t>& body, const F
         auto it = localVarIndices.find(name);
         if (it == localVarIndices.end()) continue;
 
-        // children: [TYPE_NODE, optional INIT_EXPR]
         if (s->children.size() >= 2 && s->children[1]) {
             generateExpression(body, s->children[1], F);
-            body.push_back(0x21); // local.set
+            body.push_back(0x21);
             writeLeb128(body, static_cast<uint32_t>(it->second));
         }
     }
@@ -381,7 +355,7 @@ void WasmCompiler::generateFunctionBody(std::vector<uint8_t>& body, const FuncIn
     for (auto& s : bodyNode->children) {
         if (!s) continue;
         switch (s->type) {
-            case ASTNodeType::VAR_DECL: // already handled
+            case ASTNodeType::VAR_DECL:
                 break;
             case ASTNodeType::ASSIGNMENT:
                 generateAssignment(body, s, F);
@@ -391,6 +365,9 @@ void WasmCompiler::generateFunctionBody(std::vector<uint8_t>& body, const FuncIn
                 break;
             case ASTNodeType::WHILE_LOOP:
                 generateWhileLoop(body, s, F);
+                break;
+            case ASTNodeType::FOR_LOOP:
+                generateForLoop(body, s, F);
                 break;
             case ASTNodeType::RETURN_STMT:
                 generateReturn(body, s, F);
@@ -432,8 +409,8 @@ void WasmCompiler::generateIfStatement(std::vector<uint8_t>& body,
         (ifs->children.size() > 2) ? ifs->children[2] : nullptr;
 
     generateExpression(body, cond, F);
-    body.push_back(0x04); // if
-    body.push_back(0x40); // empty block type
+    body.push_back(0x04);
+    body.push_back(0x40);
     if (thenB && thenB->type == ASTNodeType::BODY) {
         for (auto& s : thenB->children) {
             if (!s) continue;
@@ -441,6 +418,7 @@ void WasmCompiler::generateIfStatement(std::vector<uint8_t>& body,
                 case ASTNodeType::ASSIGNMENT: generateAssignment(body, s, F); break;
                 case ASTNodeType::IF_STMT:     generateIfStatement(body, s, F); break;
                 case ASTNodeType::WHILE_LOOP:  generateWhileLoop(body, s, F); break;
+                case ASTNodeType::FOR_LOOP:    generateForLoop(body, s, F); break;
                 case ASTNodeType::RETURN_STMT: generateReturn(body, s, F); break;
                 case ASTNodeType::VAR_DECL:    break;
                 default:
@@ -450,7 +428,7 @@ void WasmCompiler::generateIfStatement(std::vector<uint8_t>& body,
         }
     }
     if (elseB) {
-        body.push_back(0x05); // else
+        body.push_back(0x05);
         if (elseB->type == ASTNodeType::BODY) {
             for (auto& s : elseB->children) {
                 if (!s) continue;
@@ -458,6 +436,7 @@ void WasmCompiler::generateIfStatement(std::vector<uint8_t>& body,
                     case ASTNodeType::ASSIGNMENT: generateAssignment(body, s, F); break;
                     case ASTNodeType::IF_STMT:     generateIfStatement(body, s, F); break;
                     case ASTNodeType::WHILE_LOOP:  generateWhileLoop(body, s, F); break;
+                    case ASTNodeType::FOR_LOOP:    generateForLoop(body, s, F); break;
                     case ASTNodeType::RETURN_STMT: generateReturn(body, s, F); break;
                     case ASTNodeType::VAR_DECL:    break;
                     default:
@@ -467,7 +446,7 @@ void WasmCompiler::generateIfStatement(std::vector<uint8_t>& body,
             }
         }
     }
-    body.push_back(0x0b); // end
+    body.push_back(0x0b);
 }
 
 void WasmCompiler::generateWhileLoop(std::vector<uint8_t>& body,
@@ -477,15 +456,15 @@ void WasmCompiler::generateWhileLoop(std::vector<uint8_t>& body,
     auto cond = w->children[0];
     auto loopB = w->children[1];
 
-    body.push_back(0x02); // block
+    body.push_back(0x02);
     body.push_back(0x40);
-    body.push_back(0x03); // loop
+    body.push_back(0x03);
     body.push_back(0x40);
 
     generateExpression(body, cond, F);
-    body.push_back(0x45); // i32.eqz
-    body.push_back(0x0d); // br_if
-    body.push_back(0x01); // to outer block
+    body.push_back(0x45);
+    body.push_back(0x0d);
+    body.push_back(0x01);
 
     if (loopB && loopB->type == ASTNodeType::BODY) {
         for (auto& s : loopB->children) {
@@ -494,6 +473,7 @@ void WasmCompiler::generateWhileLoop(std::vector<uint8_t>& body,
                 case ASTNodeType::ASSIGNMENT: generateAssignment(body, s, F); break;
                 case ASTNodeType::IF_STMT:     generateIfStatement(body, s, F); break;
                 case ASTNodeType::WHILE_LOOP:  generateWhileLoop(body, s, F); break;
+                case ASTNodeType::FOR_LOOP:    generateForLoop(body, s, F); break;
                 case ASTNodeType::RETURN_STMT: generateReturn(body, s, F); break;
                 case ASTNodeType::VAR_DECL:    break;
                 default:
@@ -503,10 +483,116 @@ void WasmCompiler::generateWhileLoop(std::vector<uint8_t>& body,
         }
     }
 
-    body.push_back(0x0c); // br
-    body.push_back(0x00); // to loop
-    body.push_back(0x0b); // end loop
-    body.push_back(0x0b); // end block
+    body.push_back(0x0c);
+    body.push_back(0x00);
+    body.push_back(0x0b);
+    body.push_back(0x0b);
+}
+
+void WasmCompiler::generateForLoop(std::vector<uint8_t>& body,
+                                   std::shared_ptr<ASTNode> forNode,
+                                   const FuncInfo& F) {
+    if (!forNode) {
+        std::cout << "⚠️ Malformed FOR_LOOP node\n";
+        return;
+    }
+
+    // In your AST: FOR_LOOP.value holds the loop var name, children contain RANGE, BODY, and optional IDENTIFIER(\"reverse\")
+    const std::string iv = forNode->value;
+
+    // Find needed children regardless of order
+    std::shared_ptr<ASTNode> rangeNode = nullptr;
+    std::shared_ptr<ASTNode> loopBody  = nullptr;
+    bool isReverse = false;
+
+    for (auto& ch : forNode->children) {
+        if (!ch) continue;
+        if (ch->type == ASTNodeType::RANGE) {
+            rangeNode = ch;
+        } else if (ch->type == ASTNodeType::BODY) {
+            loopBody = ch;
+        } else if (ch->type == ASTNodeType::IDENTIFIER && ch->value == "reverse") {
+            isReverse = true;
+        }
+    }
+
+    if (!rangeNode || !loopBody) {
+        std::cout << "⚠️ Malformed FOR_LOOP node (missing RANGE or BODY)\n";
+        return;
+    }
+
+    // Resolve loop var
+    auto it = localVarIndices.find(iv);
+    if (it == localVarIndices.end()) {
+        std::cout << "⚠️ Loop variable not declared as local: " << iv << "\n";
+        return;
+    }
+    uint32_t ivIdx = static_cast<uint32_t>(it->second);
+
+    // Extract start..end
+    std::shared_ptr<ASTNode> startExpr = nullptr, endExpr = nullptr;
+    if (rangeNode->children.size() >= 2) {
+        startExpr = rangeNode->children[0];
+        endExpr   = rangeNode->children[1];
+    }
+    if (!endExpr) {
+        std::cout << "⚠️ FOR_LOOP missing range end\n";
+        return;
+    }
+
+    // i := start (default 0)
+    if (!startExpr) {
+        emitI32Const(body, 0);
+    } else {
+        generateExpression(body, startExpr, F);
+    }
+    body.push_back(0x21);
+    writeLeb128(body, ivIdx);
+
+    // block/loop
+    body.push_back(0x02);
+    body.push_back(0x40);
+    body.push_back(0x03);
+    body.push_back(0x40);
+
+    // Cond: forward break if i > end, reverse break if i < end
+    body.push_back(0x20);
+    writeLeb128(body, ivIdx);
+    generateExpression(body, endExpr, F);
+    body.push_back(isReverse ? 0x48 : 0x4a);
+    body.push_back(0x0d);
+    body.push_back(0x01);
+
+    // Body
+    for (auto& s : loopBody->children) {
+        if (!s) continue;
+        switch (s->type) {
+            case ASTNodeType::ASSIGNMENT: generateAssignment(body, s, F); break;
+            case ASTNodeType::IF_STMT:     generateIfStatement(body, s, F); break;
+            case ASTNodeType::WHILE_LOOP:  generateWhileLoop(body, s, F); break;
+            case ASTNodeType::FOR_LOOP:    generateForLoop(body, s, F); break;
+            case ASTNodeType::RETURN_STMT: generateReturn(body, s, F); break;
+            case ASTNodeType::VAR_DECL:    break;
+            default:
+                std::cout << "  ⚠️ Unhandled FOR body stmt: " << tname(s->type) << "\n";
+                break;
+        }
+    }
+
+    // Step i := i ± 1
+    body.push_back(0x20);
+    writeLeb128(body, ivIdx);
+    body.push_back(0x41);
+    writeLeb128(body, 1);
+    body.push_back(isReverse ? 0x6b : 0x6a);
+    body.push_back(0x21);
+    writeLeb128(body, ivIdx);
+
+    // backedge and close
+    body.push_back(0x0c);
+    body.push_back(0x00);
+    body.push_back(0x0b);
+    body.push_back(0x0b);
 }
 
 void WasmCompiler::generateReturn(std::vector<uint8_t>& body,
@@ -521,7 +607,7 @@ void WasmCompiler::generateReturn(std::vector<uint8_t>& body,
             else                          emitF64Const(body, 0.0);
         }
     }
-    body.push_back(0x0f); // return
+    body.push_back(0x0f);
 }
 
 // ======================================================================
@@ -556,7 +642,7 @@ void WasmCompiler::generateExpression(std::vector<uint8_t>& body,
             const std::string& op = e->value;
             if (op == "not" && !e->children.empty()) {
                 generateExpression(body, e->children[0], F);
-                body.push_back(0x45); // i32.eqz
+                body.push_back(0x45);
             } else {
                 emitI32Const(body, 0);
             }
@@ -605,7 +691,6 @@ void WasmCompiler::generateCall(std::vector<uint8_t>& body,
                                 std::shared_ptr<ASTNode> call,
                                 const FuncInfo& F) {
     (void)F;
-    // ROUTINE_CALL.value = callee name, children = arguments (or ARGUMENT_LIST child)
     std::vector<std::shared_ptr<ASTNode>> args;
 
     for (auto& ch : call->children) {
@@ -625,7 +710,7 @@ void WasmCompiler::generateCall(std::vector<uint8_t>& body,
         emitI32Const(body, 0);
         return;
     }
-    body.push_back(0x10); // call
+    body.push_back(0x10);
     writeLeb128(body, it->second);
 }
 

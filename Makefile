@@ -117,9 +117,9 @@ wasm-while-test: $(TARGET)
 	@printf 'routine main(): integer is\n'               >  test_while.txt
 	@printf '  var i: integer is 0;\n'                   >> test_while.txt
 	@printf '  var s: integer is 0;\n'                   >> test_while.txt
-	@printf '  while i < 5 loop\n'                      >> test_while.txt
+	@printf '  while i < 63 loop\n'                      >> test_while.txt
 	@printf '    s := s + 1;\n'                          >> test_while.txt
-	@printf '    i := i + 2;\n'                          >> test_while.txt
+	@printf '    i := i + 1;\n'                          >> test_while.txt
 	@printf '  end\n'                                   >> test_while.txt
 	@printf '  return s;\n'                             >> test_while.txt
 	@printf 'end\n'                                     >> test_while.txt
@@ -135,8 +135,7 @@ wasm-call-test: $(TARGET)
 	@printf '  return a + b;\n'                               >> test_call1.txt
 	@printf 'end\n'                                           >> test_call1.txt
 	@printf 'routine main(): integer is\n'                    >> test_call1.txt
-	@printf '  var x: integer is add(2, 3);\n'                >> test_call1.txt
-	@printf '  return x;\n'                                   >> test_call1.txt
+	@printf '  return add(2, 3);\n'                                   >> test_call1.txt
 	@printf 'end\n'                                           >> test_call1.txt
 	@./$(TARGET) test_call1.txt
 	@echo "--- Running generated WASM (expect 5) ---"
@@ -150,8 +149,38 @@ wasm-call-nested: $(TARGET)
 	@printf 'end\n'                                             >> test_call2.txt
 	@printf 'routine main(): integer is\n'                      >> test_call2.txt
 	@printf '  var x: integer is add(add(1, 2), 3);\n'          >> test_call2.txt
-	@printf '  return x;\n'                     				>> test_call2.txt
+	@printf '  return add(add(1, 2), 3);\n'                     				>> test_call2.txt
 	@printf 'end\n'                                             >> test_call2.txt
 	@./$(TARGET) test_call2.txt
 	@echo "--- Running generated WASM (expect 6) ---"
+	@wasmtime --invoke main output.wasm || true
+
+
+wasm-for-test: $(TARGET)
+	@echo "=== TESTING FOR (0..4) ==="
+	@printf 'routine main(): integer is\n'                 >  test_for.txt
+	@printf '  var i: integer is 0;\n'                     >> test_for.txt
+	@printf '  var s: integer is 0;\n'                     >> test_for.txt
+	@printf '  for i in 0 .. 10 loop\n'                     >> test_for.txt
+	@printf '    s := s + i;\n'                            >> test_for.txt
+	@printf '  end\n'                                      >> test_for.txt
+	@printf '  return s;\n'                                >> test_for.txt
+	@printf 'end\n'                                        >> test_for.txt
+	@./$(TARGET) test_for.txt
+	@echo "--- Running generated WASM (expect 10) ---"
+	@wasmtime --invoke main output.wasm || true
+
+
+wasm-for-rev-test: $(TARGET)
+	@echo "=== TESTING FOR REVERSE (5..1) ==="
+	@printf 'routine main(): integer is\n'                 >  test_for_rev.txt
+	@printf '  var i: integer is 0;\n'                     >> test_for_rev.txt
+	@printf '  var s: integer is 0;\n'                     >> test_for_rev.txt
+	@printf '  for i in 5 .. 1 reverse loop\n'             >> test_for_rev.txt
+	@printf '    s := s + i;\n'                            >> test_for_rev.txt
+	@printf '  end\n'                                      >> test_for_rev.txt
+	@printf '  return s;\n'                                >> test_for_rev.txt
+	@printf 'end\n'                                        >> test_for_rev.txt
+	@./$(TARGET) test_for_rev.txt
+	@echo "--- Running generated WASM (expect 15 = 5+4+3+2+1) ---"
 	@wasmtime --invoke main output.wasm || true

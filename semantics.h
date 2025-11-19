@@ -511,14 +511,21 @@ private:
                 // For loop variable is declared in the loop scope
                 pushScope();
                 declareVar(node->value);
+            
+                // IMPORTANT: skip the special IDENTIFIER("reverse") marker
                 for (auto& ch : node->children) {
+                    if (ch && ch->type == ASTNodeType::IDENTIFIER && ch->value == "reverse") {
+                        continue; // do not treat as a variable use
+                    }
                     ok = ok && checkDeclaredBeforeUsageRec(ch);
                     ok = ok && checkIdentifierUse(ch);
                     ok = ok && checkUserTypeUse(ch);
                 }
+            
                 popScope();
                 return ok;
             }
+            
             
             default: {
                 for (auto& ch : node->children) {
@@ -1334,7 +1341,7 @@ private:
                 std::cout << "  📊 RETURN_STMT with " << node->children.size() << " children" << std::endl;
                 if (!node->children.empty()) {
                     std::cout << "  📖 Processing return expression" << std::endl;
-                    trackReadsInExpression(node->children[0]); // Process the return expression
+                    collectCompleteUsage(node->children[0]); // Process the return expression
                 }
                 return;
             case ASTNodeType::PRINT_STMT:

@@ -13,11 +13,11 @@ class WasmCompiler {
 private:
     struct FuncInfo {
         std::string name;
-        std::vector<uint8_t> paramTypes;  // wasm value types
-        std::vector<uint8_t> resultTypes; // 0 or 1
-        std::shared_ptr<ASTNode> node;    // ROUTINE_DECL
-        uint32_t typeIndex;               // index in type section
-        uint32_t funcIndex;               // index in function index space
+        std::vector<uint8_t> paramTypes;   // wasm value types
+        std::vector<uint8_t> resultTypes;  // 0 or 1
+        std::shared_ptr<ASTNode> node;     // ROUTINE_DECL
+        uint32_t typeIndex;                // index in type section
+        uint32_t funcIndex;                // index in function index space
     };
 
     // All functions in program (helpers + main)
@@ -32,6 +32,7 @@ private:
 public:
     WasmCompiler() : nextLocalIndex(0) {}
 
+    // Compile full AST into a single-module WASM file exporting `main`
     bool compile(std::shared_ptr<ASTNode> program, const std::string& filename);
 
 private:
@@ -69,6 +70,9 @@ private:
     void generateWhileLoop(std::vector<uint8_t>& body,
                            std::shared_ptr<ASTNode> whileStmt,
                            const FuncInfo& F);
+    void generateForLoop(std::vector<uint8_t>& body,
+                         std::shared_ptr<ASTNode> forNode,
+                         const FuncInfo& F);
     void generateReturn(std::vector<uint8_t>& body,
                         std::shared_ptr<ASTNode> returnStmt,
                         const FuncInfo& F);

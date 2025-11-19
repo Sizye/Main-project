@@ -2,6 +2,5 @@ routine add(a: integer, b: integer): integer is
   return a + b;
 end
 routine main(): integer is
-  var x: integer is add(2, 3);
-  return x;
+  return add(2, 3);
 end
