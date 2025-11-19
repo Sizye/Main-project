@@ -38,9 +38,9 @@ routine neverCalled() is
     print "This never runs!";
 end
 
-routine main() is
+routine main(): integer is
     complexLogic();
-
     var unused: integer;
     unused := sideEffectFunction();
+    return globalCounter;
 end

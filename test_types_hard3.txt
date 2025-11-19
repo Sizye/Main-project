@@ -1,0 +1,24 @@
+routine main() : boolean is
+    var i : integer;
+    var r : real;
+    var b : boolean;
+    
+    i := 0;
+    b := i;
+    
+    i := 1;
+    b := i;
+    
+    r := 0.0;
+    i := r;
+    b := i;
+    
+    r := 1.5;
+    i := r;
+    b := i;
+    
+    b := (i + r) > 2.0;
+    
+    return b;
+end
+

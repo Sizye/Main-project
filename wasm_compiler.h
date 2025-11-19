@@ -9,6 +9,14 @@
 #include <vector>
 #include <memory>
 
+// Type system for type checking and conversion
+enum class ValueType {
+    INTEGER,
+    REAL,
+    BOOLEAN,
+    UNKNOWN
+};
+
 class WasmCompiler {
 private:
     struct FuncInfo {
@@ -61,6 +69,7 @@ private:
         uint8_t type;
         int memoryOffset;  // Offset in linear memory
         int size;          // Size in bytes
+        std::shared_ptr<ASTNode> initializer;  // Initializer expression (if any)
     };
     std::unordered_map<std::string, GlobalVarInfo> globalVars;
     std::unordered_map<std::string, ArrayInfo> globalArrays;  // Global arrays
@@ -94,7 +103,7 @@ private:
     void addParametersToLocals(const FuncInfo& F);
     std::vector<uint8_t> analyzeLocalVariables(const FuncInfo& F);
     void generateLocalInitializers(std::vector<uint8_t>& body, const FuncInfo& F);
-    void generateFunctionBody(std::vector<uint8_t>& body, const FuncInfo& F);
+    bool generateFunctionBody(std::vector<uint8_t>& body, const FuncInfo& F);
 
     // Statements
     void generateAssignment(std::vector<uint8_t>& body,
@@ -176,6 +185,16 @@ private:
                               std::shared_ptr<ASTNode> memberAccess,
                               std::shared_ptr<ASTNode> rhs,
                               const FuncInfo& F);
+    
+    // Type system
+    ValueType getExpressionType(std::shared_ptr<ASTNode> expr, const FuncInfo& F);
+    void emitTypeConversion(std::vector<uint8_t>& body, ValueType fromType, ValueType toType);
+    bool validateAssignmentConversion(ValueType fromType, ValueType toType, const std::string& context = "");
+    
+    // Print statement
+    void generatePrintStatement(std::vector<uint8_t>& body,
+                                std::shared_ptr<ASTNode> printStmt,
+                                const FuncInfo& F);
 };
 
 #endif // WASM_COMPILER_H

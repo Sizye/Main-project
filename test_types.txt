@@ -1,0 +1,16 @@
+routine main() : real is
+    var x : integer;
+    var y : real;
+    var z : boolean;
+    
+    x := 42;
+    y := 3.14;
+    z := true;
+    
+    y := x;
+    x := y;
+    z := x = 42;
+    
+    return x;
+end
+

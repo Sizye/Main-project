@@ -1,0 +1,23 @@
+routine main() : real is
+    var x : integer;
+    var y : real;
+    var z : boolean;
+    var result : real;
+    
+    x := 42;
+    y := 3.14159;
+    z := true;
+    
+    x := z;
+    y := x;
+    
+    x := y;
+    z := x = 1;
+    
+    result := x + y;
+    result := result * 2.0;
+    result := result / 4;
+    
+    return result;
+end
+

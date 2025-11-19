@@ -1,0 +1,7 @@
+var glob: integer is 4;
+
+routine main(): integer is
+  var i: integer;
+  i := 42 + 4.345;
+  return glob;
+end

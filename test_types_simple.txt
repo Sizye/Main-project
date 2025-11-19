@@ -1,0 +1,10 @@
+routine main() : boolean is
+    var i : integer;
+    var b : boolean;
+    
+    i := 1;
+    b := i;
+    
+    return b;
+end
+

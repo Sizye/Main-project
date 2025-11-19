@@ -1,0 +1,42 @@
+routine main() : integer is
+    var a : integer;
+    var b : real;
+    var c : boolean;
+    var result : integer;
+    
+    a := 42;
+    b := 3.14;
+    c := true;
+    
+    result := 0;
+    
+    if a > 0 then
+        result := result + 1;
+    end
+    
+    if b > 0.0 then
+        result := result + 1;
+    end
+    
+    if c then
+        result := result + 1;
+    end
+    
+    b := a;
+    if b > 40.0 then
+        result := result + 1;
+    end
+    
+    a := b;
+    if a > 0 then
+        result := result + 1;
+    end
+    
+    c := a > 0;
+    if c then
+        result := result + 1;
+    end
+    
+    return result;
+end
+

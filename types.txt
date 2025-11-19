@@ -1,0 +1,17 @@
+type Person is record
+    var salary: real;
+    var id: integer;
+    var name: array[50] integer; 
+    var age: integer;
+    var isManager: boolean;
+end;
+
+routine main(): real is
+    var asdg: Person;
+    asdg.id := 34.5;
+    var i: real;
+    i := 234+33.453453;
+    var employees: array[10] integer;
+    employees[1] := 1 + 10034.345;
+    return asdg.id;
+end

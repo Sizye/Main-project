@@ -1,0 +1,28 @@
+routine main() : integer is
+    var a : integer;
+    var b : real;
+    var c : boolean;
+    var d : integer;
+    var e : real;
+    
+    a := 100;
+    b := a;
+    
+    b := 123.789;
+    a := b;
+    
+    e := 5.0 + 3;
+    d := e;
+    
+    a := 10 + 2.5;
+    
+    c := a = 12;
+    
+    c := b = 123.0;
+    
+    e := a * 2.5;
+    a := e / 2.0;
+    
+    return a;
+end
+

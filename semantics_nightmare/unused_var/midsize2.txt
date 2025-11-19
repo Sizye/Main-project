@@ -41,8 +41,9 @@ routine unusedRoutine() is
     print "Never called!";
 end
 
-routine main() is
+routine main(): integer is
     initializeCompany();
     var unusedResult: integer;
     unusedResult := 42;
+    return unusedResult;
 end
