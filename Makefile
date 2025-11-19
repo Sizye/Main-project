@@ -126,3 +126,32 @@ wasm-while-test: $(TARGET)
 	@./$(TARGET) test_while.txt
 	@echo "--- Running generated WASM (expect 10 = 0+1+2+3+4) ---"
 	@wasmtime run --invoke main output.wasm
+
+
+# Function call: add(2,3) -> 5
+wasm-call-test: $(TARGET)
+	@echo "=== TESTING CALL ==="
+	@printf 'routine add(a: integer, b: integer): integer is\n' >  test_call1.txt
+	@printf '  return a + b;\n'                               >> test_call1.txt
+	@printf 'end\n'                                           >> test_call1.txt
+	@printf 'routine main(): integer is\n'                    >> test_call1.txt
+	@printf '  var x: integer is add(2, 3);\n'                >> test_call1.txt
+	@printf '  return x;\n'                                   >> test_call1.txt
+	@printf 'end\n'                                           >> test_call1.txt
+	@./$(TARGET) test_call1.txt
+	@echo "--- Running generated WASM (expect 5) ---"
+	@wasmtime --invoke main output.wasm || true
+
+# Nested calls: add(add(1,2),3) -> 6
+wasm-call-nested: $(TARGET)
+	@echo "=== TESTING NESTED CALL ==="
+	@printf 'routine add(a: integer, b: integer): integer is\n' >  test_call2.txt
+	@printf '  return a + b;\n'                                 >> test_call2.txt
+	@printf 'end\n'                                             >> test_call2.txt
+	@printf 'routine main(): integer is\n'                      >> test_call2.txt
+	@printf '  var x: integer is add(add(1, 2), 3);\n'          >> test_call2.txt
+	@printf '  return x;\n'                     				>> test_call2.txt
+	@printf 'end\n'                                             >> test_call2.txt
+	@./$(TARGET) test_call2.txt
+	@echo "--- Running generated WASM (expect 6) ---"
+	@wasmtime --invoke main output.wasm || true

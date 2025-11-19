@@ -7,72 +7,88 @@
 #include <string>
 #include <unordered_map>
 #include <vector>
+#include <memory>
 
 class WasmCompiler {
 private:
-    // Optional: reserved for future use (globals/functions)
-    std::unordered_map<std::string,int>         globalVars;
-    std::unordered_map<std::string,std::string> functions;
+    struct FuncInfo {
+        std::string name;
+        std::vector<uint8_t> paramTypes;  // wasm value types
+        std::vector<uint8_t> resultTypes; // 0 or 1
+        std::shared_ptr<ASTNode> node;    // ROUTINE_DECL
+        uint32_t typeIndex;               // index in type section
+        uint32_t funcIndex;               // index in function index space
+    };
 
-    // Local variable name -> wasm local index
+    // All functions in program (helpers + main)
+    std::vector<FuncInfo> funcs;
+    // Name->function index
+    std::unordered_map<std::string, uint32_t> funcIndexByName;
+
+    // Per-function locals: name -> local index
     std::unordered_map<std::string,int> localVarIndices;
     int nextLocalIndex;
 
 public:
     WasmCompiler() : nextLocalIndex(0) {}
 
-    // Compile full AST into a single-module WASM file exporting `main`
-    bool compile(std::shared_ptr<ASTNode> program,
-                 const std::string& filename);
+    bool compile(std::shared_ptr<ASTNode> program, const std::string& filename);
 
 private:
-    // High-level helpers
-    std::shared_ptr<ASTNode> findMainFunction(std::shared_ptr<ASTNode> program);
-    uint8_t                  mapPrimitiveToWasm(const std::string& typeName);
-    uint8_t                  inferReturnType(std::shared_ptr<ASTNode> mainFunc);
+    // Collect and index all routines
+    bool collectFunctions(std::shared_ptr<ASTNode> program);
 
-    // Low-level encoding helpers
+    // Signature inference
+    void analyzeFunctionSignature(FuncInfo& F);
+    uint8_t mapPrimitiveToWasm(const std::string& tname);
+
+    // Wasm writers
     void writeLeb128(std::vector<uint8_t>& buf, uint32_t value);
     void writeString(std::vector<uint8_t>& buf, const std::string& s);
 
-    // Section builders
-    std::vector<uint8_t> buildTypeSection(std::shared_ptr<ASTNode> mainFunc);
+    // Sections for all functions
+    std::vector<uint8_t> buildTypeSection();
     std::vector<uint8_t> buildFunctionSection();
     std::vector<uint8_t> buildExportSection();
-    std::vector<uint8_t> buildCodeSection(std::shared_ptr<ASTNode> mainFunc);
+    std::vector<uint8_t> buildCodeSection();
 
-    // Locals and initialization
-    std::vector<uint8_t> analyzeLocalVariables(std::shared_ptr<ASTNode> mainFunc);
-    void generateLocalVariableInitialization(std::vector<uint8_t>& body,
-                                             std::shared_ptr<ASTNode> mainFunc);
+    // Per-function codegen (called from buildCodeSection)
+    void resetLocals();
+    void addParametersToLocals(const FuncInfo& F);
+    std::vector<uint8_t> analyzeLocalVariables(const FuncInfo& F);
+    void generateLocalInitializers(std::vector<uint8_t>& body, const FuncInfo& F);
+    void generateFunctionBody(std::vector<uint8_t>& body, const FuncInfo& F);
 
     // Statements
-    void generateMainLogic(std::vector<uint8_t>& body,
-                           std::shared_ptr<ASTNode> mainFunc);
-    void generateIfStatement(std::vector<uint8_t>& body,
-                             std::shared_ptr<ASTNode> ifStmt,
-                             std::shared_ptr<ASTNode> mainFunc);
-    void generateWhileLoop(std::vector<uint8_t>& body,
-                           std::shared_ptr<ASTNode> whileStmt,
-                           std::shared_ptr<ASTNode> mainFunc);
     void generateAssignment(std::vector<uint8_t>& body,
                             std::shared_ptr<ASTNode> assignment,
-                            std::shared_ptr<ASTNode> mainFunc);
+                            const FuncInfo& F);
+    void generateIfStatement(std::vector<uint8_t>& body,
+                             std::shared_ptr<ASTNode> ifStmt,
+                             const FuncInfo& F);
+    void generateWhileLoop(std::vector<uint8_t>& body,
+                           std::shared_ptr<ASTNode> whileStmt,
+                           const FuncInfo& F);
     void generateReturn(std::vector<uint8_t>& body,
                         std::shared_ptr<ASTNode> returnStmt,
-                        std::shared_ptr<ASTNode> mainFunc);
+                        const FuncInfo& F);
 
     // Expressions
-    void generateI32Const(std::vector<uint8_t>& body, int value);
-    void generateF64Const(std::vector<uint8_t>& body, double value);
-    void generateVariableLoad(std::vector<uint8_t>& body,
-                              const std::string& name);
-    void generateBinaryOp(std::vector<uint8_t>& body,
-                          std::shared_ptr<ASTNode> binaryOp,
-                          std::shared_ptr<ASTNode> mainFunc);
     void generateExpression(std::vector<uint8_t>& body,
                             std::shared_ptr<ASTNode> expr,
-                            std::shared_ptr<ASTNode> mainFunc);
+                            const FuncInfo& F);
+    void generateBinaryOp(std::vector<uint8_t>& body,
+                          std::shared_ptr<ASTNode> bin,
+                          const FuncInfo& F);
+    void generateCall(std::vector<uint8_t>& body,
+                      std::shared_ptr<ASTNode> call,
+                      const FuncInfo& F);
+
+    // Small emitters
+    void emitI32Const(std::vector<uint8_t>& body, int v);
+    void emitF64Const(std::vector<uint8_t>& body, double d);
+    void emitLocalGet(std::vector<uint8_t>& body, const std::string& name);
+    void emitLocalSet(std::vector<uint8_t>& body, const std::string& name);
 };
 
 #endif // WASM_COMPILER_H
