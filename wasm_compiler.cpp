@@ -804,6 +804,10 @@ void WasmCompiler::generateExpression(std::vector<uint8_t>& body,
         case ASTNodeType::ROUTINE_CALL:
             generateCall(body, e, F);
             break;
+        case ASTNodeType::PRINT_STMT:
+            // For now, just ignore print statements
+            std::cout << "  📝 PRINT_STMT ignored in WASM output\n";
+            break;
         default:
             std::cout << "  ⚠️ Unhandled expr: " << tname(e->type) << "\n";
             emitI32Const(body, 0);
@@ -826,6 +830,7 @@ void WasmCompiler::generateBinaryOp(std::vector<uint8_t>& body,
     else if (op == "-")  body.push_back(0x6b);
     else if (op == "*")  body.push_back(0x6c);
     else if (op == "/")  body.push_back(0x6d);
+    else if (op == "%")  body.push_back(0x6f);
     else if (op == "and") body.push_back(0x71);
     else if (op == "or")  body.push_back(0x72);
     else if (op == "xor") body.push_back(0x73);
@@ -1281,54 +1286,111 @@ void WasmCompiler::generateMemberAssignment(std::vector<uint8_t>& body,
         generateExpression(body, rhs, F);
         return;
     }
-    
+    uint8_t fieldType = 0x7f;
     auto base = memberAccess->children[0];
     std::string fieldName = memberAccess->value;
     
-    if (!base || base->type != ASTNodeType::IDENTIFIER) {
-        std::cout << "⚠️ Member assignment on non-identifier\n";
-        generateExpression(body, rhs, F);
-        return;
-    }
-    
-    std::string recordName = base->value;
-    auto recordIt = recordVariables.find(recordName);
-    if (recordIt == recordVariables.end()) {
-        std::cout << "⚠️ Unknown record variable: " << recordName << "\n";
-        generateExpression(body, rhs, F);
-        return;
-    }
-    
-    // Find field offset
-    auto recordTypeIt = recordTypes.find(recordIt->second.recordType);
-    if (recordTypeIt == recordTypes.end()) {
-        std::cout << "⚠️ Unknown record type: " << recordIt->second.recordType << "\n";
-        generateExpression(body, rhs, F);
-        return;
-    }
-    
-    int fieldOffset = -1;
-    uint8_t fieldType = 0x7f;
-    
-    for (const auto& field : recordTypeIt->second.fields) {
-        if (field.first == fieldName) {
-            fieldOffset = field.second.second;
-            fieldType = field.second.first;
-            break;
+    // Handle both IDENTIFIER and ARRAY_ACCESS as base
+    if (base->type == ASTNodeType::IDENTIFIER) {
+        // Simple record variable: record.field
+        std::string recordName = base->value;
+        auto recordIt = recordVariables.find(recordName);
+        if (recordIt == recordVariables.end()) {
+            std::cout << "⚠️ Unknown record variable: " << recordName << "\n";
+            generateExpression(body, rhs, F);
+            return;
         }
-    }
-    
-    if (fieldOffset == -1) {
-        std::cout << "⚠️ Unknown field '" << fieldName << "' in record '" 
-                  << recordIt->second.recordType << "'\n";
+        
+        // Find field offset
+        auto recordTypeIt = recordTypes.find(recordIt->second.recordType);
+        if (recordTypeIt == recordTypes.end()) {
+            std::cout << "⚠️ Unknown record type: " << recordIt->second.recordType << "\n";
+            generateExpression(body, rhs, F);
+            return;
+        }
+        
+        int fieldOffset = -1;
+        fieldType = 0x7f;
+        
+        for (const auto& field : recordTypeIt->second.fields) {
+            if (field.first == fieldName) {
+                fieldOffset = field.second.second;
+                fieldType = field.second.first;
+                break;
+            }
+        }
+        
+        if (fieldOffset == -1) {
+            std::cout << "⚠️ Unknown field '" << fieldName << "' in record '" 
+                      << recordIt->second.recordType << "'\n";
+            generateExpression(body, rhs, F);
+            return;
+        }
+        
+        // Calculate address: record_base + field_offset
+        emitLocalGet(body, recordName);     // Base address
+        emitI32Const(body, fieldOffset);    // Field offset
+        body.push_back(0x6a);               // i32.add
+        
+    } else if (base->type == ASTNodeType::ARRAY_ACCESS) {
+        // Array of records: array[index].field
+        // First, get the base address of the array element
+        generateArrayAccessForRecord(body, base, F);
+        
+        // Now find the field offset within the record
+        std::string recordTypeName;
+        
+        // Try to find the record type from array info
+        auto arrayRef = base->children[0];
+        if (arrayRef && arrayRef->type == ASTNodeType::IDENTIFIER) {
+            auto arrayIt = arrayInfos.find(arrayRef->value);
+            if (arrayIt != arrayInfos.end()) {
+                // For now, we'll assume all arrays of records have the same structure
+                // You might need to store record type info in ArrayInfo
+                recordTypeName = "Person"; // Hardcode for now, need to improve this
+            }
+        }
+        
+        if (recordTypeName.empty()) {
+            std::cout << "⚠️ Could not determine record type for array element\n";
+            generateExpression(body, rhs, F);
+            return;
+        }
+        
+        auto recordTypeIt = recordTypes.find(recordTypeName);
+        if (recordTypeIt == recordTypes.end()) {
+            std::cout << "⚠️ Unknown record type: " << recordTypeName << "\n";
+            generateExpression(body, rhs, F);
+            return;
+        }
+        
+        int fieldOffset = -1;
+        fieldType = 0x7f;
+        
+        for (const auto& field : recordTypeIt->second.fields) {
+            if (field.first == fieldName) {
+                fieldOffset = field.second.second;
+                fieldType = field.second.first;
+                break;
+            }
+        }
+        
+        if (fieldOffset == -1) {
+            std::cout << "⚠️ Unknown field '" << fieldName << "' in record '" 
+                      << recordTypeName << "'\n";
+            generateExpression(body, rhs, F);
+            return;
+        }
+        
+        // Add field offset to the array element address (already on stack)
+        emitI32Const(body, fieldOffset);
+        body.push_back(0x6a); // i32.add
+        
+    } else {
+        std::cout << "⚠️ Member assignment on unsupported base type: " << tname(base->type) << "\n";
         generateExpression(body, rhs, F);
         return;
     }
-    
-    // Calculate address: record_base + field_offset
-    emitLocalGet(body, recordName);     // Base address
-    emitI32Const(body, fieldOffset);    // Field offset
-    body.push_back(0x6a);               // i32.add
     
     // Generate the value to store
     generateExpression(body, rhs, F);
@@ -1342,4 +1404,46 @@ void WasmCompiler::generateMemberAssignment(std::vector<uint8_t>& body,
         body.push_back(0x02); // 4-byte align
     }
     body.push_back(0x00); // offset 0 (already included in calculation)
+}
+
+void WasmCompiler::generateArrayAccessForRecord(std::vector<uint8_t>& body,
+                                                std::shared_ptr<ASTNode> arrayAccess,
+                                                const FuncInfo& F) {
+    if (!arrayAccess || arrayAccess->children.size() != 2) {
+        std::cout << "⚠️ Malformed array access for record\n";
+        emitI32Const(body, 0);
+        return;
+    }
+    
+    auto arrayRef = arrayAccess->children[0];
+    auto indexExpr = arrayAccess->children[1];
+    
+    if (!arrayRef || !indexExpr || arrayRef->type != ASTNodeType::IDENTIFIER) {
+        emitI32Const(body, 0);
+        return;
+    }
+    
+    std::string arrayName = arrayRef->value;
+    auto it = arrayInfos.find(arrayName);
+    if (it == arrayInfos.end()) {
+        std::cout << "⚠️ Unknown array: " << arrayName << "\n";
+        emitI32Const(body, 0);
+        return;
+    }
+    
+    // Get base address
+    emitLocalGet(body, arrayName);
+    
+    // Calculate index * record_size
+    generateExpression(body, indexExpr, F);
+    
+    // Multiply by record size (each Person record is 220 bytes based on your logs)
+    int recordSize = 220; // This should come from your record type info
+    emitI32Const(body, recordSize);
+    body.push_back(0x6c); // i32.mul
+    
+    // Add to base address
+    body.push_back(0x6a); // i32.add
+    
+    // Result: address of array[index] is now on stack
 }

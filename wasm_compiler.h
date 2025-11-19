@@ -55,6 +55,14 @@ private:
 
     std::unordered_map<std::string, RecordVarInfo> recordVariables;
 
+    struct GlobalVarInfo {
+        std::string name;
+        uint8_t type;
+        int memoryOffset;  // Offset in linear memory
+        int size;          // Size in bytes
+    };
+    std::unordered_map<std::string, GlobalVarInfo> globalVars;
+    std::unordered_map<std::string, ArrayInfo> globalArrays;  // Global arrays
 public:
     WasmCompiler() : nextLocalIndex(0), globalMemoryOffset(0) {}
 
@@ -143,6 +151,9 @@ private:
     std::tuple<int, uint8_t, int> resolveArrayMember(std::vector<uint8_t>& body,
                                                                std::shared_ptr<ASTNode> memberAccess,
                                                                const FuncInfo& F);
+    void generateArrayAccessForRecord(std::vector<uint8_t>& body,
+                                                std::shared_ptr<ASTNode> arrayAccess,
+                                                const FuncInfo& F);
     // Records
     void collectRecordTypes(std::shared_ptr<ASTNode> program);
     std::pair<uint8_t, int> analyzeFieldType(std::shared_ptr<ASTNode> fieldDecl);
