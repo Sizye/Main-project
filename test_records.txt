@@ -1,0 +1,13 @@
+type Person is record
+    var id : integer;
+    var name : array[50] integer;
+    var height : real;
+    var isStudent : boolean;
+end;
+
+routine main(): integer is
+  var asd: Person;
+  asd.id := 32;
+  asd.name[2] := 352;
+  return asd.name[2]; 
+end

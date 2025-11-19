@@ -1,8 +1,5 @@
-routine add(a: integer, b: integer): integer is
-  return a + b;
-end
-
 routine main(): integer is
-  var name : array[50] integer;
-  return name[34];
+  var arr : array[10000000] integer;
+  arr[5000] := 432;
+  return arr[5000];
 end

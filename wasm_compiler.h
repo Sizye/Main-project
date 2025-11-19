@@ -37,10 +37,26 @@ private:
     };
     std::unordered_map<std::string, ArrayInfo> arrayInfos;
     // Memory management for arrays
-    int nextMemoryOffset;
+    int globalMemoryOffset;
+
+    struct RecordInfo {
+        std::string name;
+        std::vector<std::pair<std::string, std::pair<uint8_t, int>>> fields;
+        // field_name -> (type, offset_in_bytes)
+        int totalSize;
+    };
+
+    std::unordered_map<std::string, RecordInfo> recordTypes;
+        struct RecordVarInfo {
+        std::string recordType;
+        int baseOffset; // In linear memory
+        int size;
+    };
+
+    std::unordered_map<std::string, RecordVarInfo> recordVariables;
 
 public:
-    WasmCompiler() : nextLocalIndex(0), nextMemoryOffset(0) {}
+    WasmCompiler() : nextLocalIndex(0), globalMemoryOffset(0) {}
 
     // Compile full AST into a single-module WASM file exporting `main`
     bool compile(std::shared_ptr<ASTNode> program, const std::string& filename);
@@ -107,6 +123,7 @@ private:
     void emitI32Store(std::vector<uint8_t>& body, uint32_t offset);
     void emitF64Load(std::vector<uint8_t>& body, uint32_t offset);
     void emitF64Store(std::vector<uint8_t>& body, uint32_t offset);
+    std::vector<uint8_t> buildMemorySection();
 
     // For array type handling
     uint8_t getArrayType(std::shared_ptr<ASTNode> arrayTypeNode);
@@ -123,6 +140,16 @@ private:
                                  std::shared_ptr<ASTNode> arrayAccess,
                                  std::shared_ptr<ASTNode> rhs,
                                  const FuncInfo& F);
+    std::tuple<int, uint8_t, int> resolveArrayMember(std::vector<uint8_t>& body,
+                                                               std::shared_ptr<ASTNode> memberAccess,
+                                                               const FuncInfo& F);
+    // Records
+    void collectRecordTypes(std::shared_ptr<ASTNode> program);
+    std::pair<uint8_t, int> analyzeFieldType(std::shared_ptr<ASTNode> fieldDecl);
+    void generateMemberAssignment(std::vector<uint8_t>& body,
+                              std::shared_ptr<ASTNode> memberAccess,
+                              std::shared_ptr<ASTNode> rhs,
+                              const FuncInfo& F);
 };
 
 #endif // WASM_COMPILER_H

@@ -26,9 +26,9 @@ routine optimizeHRSystem() is
     end
 end
 
-routine main() is
+routine main(): integer is
     optimizeHRSystem();
     if employees[1].id > 34 then
-        return;
+        return 2;
     end
 end
