@@ -37,7 +37,8 @@ $(LEX_OUT): $(LEX_SRC) $(YACC_HEADER)
 # Test with file input
 wasm-test: $(TARGET)
 	@echo "=== TESTING WASM COMPILATION ==="
-	@echo 'var x: integer; routine main() is return 42; end;' > test_wasm.txt
+	@printf 'routine main(): integer is\n  var x: integer is 1;\n  return x;\nend\n' > test_wasm.txt
+
 	@./$(TARGET) test_wasm.txt
 	@if [ -f output.wasm ]; then \
 		echo "✅ WASM file generated!"; \
@@ -94,3 +95,34 @@ clean:
 
 # Quick rebuild
 rebuild: clean all
+
+
+# Test: IF statement and comparisons
+wasm-if-test: $(TARGET)
+	@echo "=== TESTING WASM IF/ELSE ==="
+	@printf 'routine main(): integer is\n'                >  test_if.txt
+	@printf '  if 10 < 5 then\n'                          >> test_if.txt
+	@printf '    return 10;\n'                           >> test_if.txt
+	@printf '  else\n'                                   >> test_if.txt
+	@printf '    return 20;\n'                           >> test_if.txt
+	@printf '  end\n'                                    >> test_if.txt
+	@printf 'end\n'                                      >> test_if.txt
+	@./$(TARGET) test_if.txt
+	@echo "--- Running generated WASM (expect 10) ---"
+	@wasmtime run --invoke main output.wasm  
+
+# Test: WHILE loop and arithmetic
+wasm-while-test: $(TARGET)
+	@echo "=== TESTING WASM WHILE LOOP ==="
+	@printf 'routine main(): integer is\n'               >  test_while.txt
+	@printf '  var i: integer is 0;\n'                   >> test_while.txt
+	@printf '  var s: integer is 0;\n'                   >> test_while.txt
+	@printf '  while i < 5 loop\n'                      >> test_while.txt
+	@printf '    s := s + 1;\n'                          >> test_while.txt
+	@printf '    i := i + 2;\n'                          >> test_while.txt
+	@printf '  end\n'                                   >> test_while.txt
+	@printf '  return s;\n'                             >> test_while.txt
+	@printf 'end\n'                                     >> test_while.txt
+	@./$(TARGET) test_while.txt
+	@echo "--- Running generated WASM (expect 10 = 0+1+2+3+4) ---"
+	@wasmtime run --invoke main output.wasm

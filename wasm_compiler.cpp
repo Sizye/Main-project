@@ -1,932 +1,252 @@
 #include "wasm_compiler.h"
+
 #include <iostream>
 #include <cstring>
-std::string astNodeTypeToString(ASTNodeType type) {
-        switch (type) {
-            case ASTNodeType::PROGRAM: return "PROGRAM";
-            case ASTNodeType::VAR_DECL: return "VAR_DECL";
-            case ASTNodeType::TYPE_DECL: return "TYPE_DECL";
-            case ASTNodeType::ROUTINE_DECL: return "ROUTINE_DECL";
-            case ASTNodeType::ROUTINE_FORWARD_DECL: return "ROUTINE_FORWARD_DECL";
-            case ASTNodeType::PARAMETER: return "PARAMETER";
-            case ASTNodeType::PRIMITIVE_TYPE: return "PRIMITIVE_TYPE";
-            case ASTNodeType::ARRAY_TYPE: return "ARRAY_TYPE";
-            case ASTNodeType::RECORD_TYPE: return "RECORD_TYPE";
-            case ASTNodeType::USER_TYPE: return "USER_TYPE";
-            case ASTNodeType::BINARY_OP: return "BINARY_OP";
-            case ASTNodeType::UNARY_OP: return "UNARY_OP";
-            case ASTNodeType::LITERAL_INT: return "LITERAL_INT";
-            case ASTNodeType::LITERAL_REAL: return "LITERAL_REAL";
-            case ASTNodeType::LITERAL_BOOL: return "LITERAL_BOOL";
-            case ASTNodeType::LITERAL_STRING: return "LITERAL_STRING";
-            case ASTNodeType::IDENTIFIER: return "IDENTIFIER";
-            case ASTNodeType::ROUTINE_CALL: return "ROUTINE_CALL";
-            case ASTNodeType::ARRAY_ACCESS: return "ARRAY_ACCESS";
-            case ASTNodeType::MEMBER_ACCESS: return "MEMBER_ACCESS";
-            case ASTNodeType::SIZE_EXPRESSION: return "SIZE_EXPRESSION";
-            case ASTNodeType::ASSIGNMENT: return "ASSIGNMENT";
-            case ASTNodeType::IF_STMT: return "IF_STMT";
-            case ASTNodeType::WHILE_LOOP: return "WHILE_LOOP";
-            case ASTNodeType::FOR_LOOP: return "FOR_LOOP";
-            case ASTNodeType::PRINT_STMT: return "PRINT_STMT";
-            case ASTNodeType::RETURN_STMT: return "RETURN_STMT";
-            case ASTNodeType::BODY: return "BODY";
-            case ASTNodeType::EXPRESSION_LIST: return "EXPRESSION_LIST";
-            case ASTNodeType::PARAMETER_LIST: return "PARAMETER_LIST";
-            case ASTNodeType::ARGUMENT_LIST: return "ARGUMENT_LIST";
-            case ASTNodeType::RANGE: return "RANGE";
-            default: return "UNKNOWN";
-        }
+#include <cmath>
+
+// Debug helper
+static std::string astNodeTypeToString(ASTNodeType type) {
+    switch (type) {
+        case ASTNodeType::PROGRAM:        return "PROGRAM";
+        case ASTNodeType::VAR_DECL:       return "VAR_DECL";
+        case ASTNodeType::TYPE_DECL:      return "TYPE_DECL";
+        case ASTNodeType::ROUTINE_DECL:   return "ROUTINE_DECL";
+        case ASTNodeType::ROUTINE_FORWARD_DECL: return "ROUTINE_FORWARD_DECL";
+        case ASTNodeType::PARAMETER:      return "PARAMETER";
+        case ASTNodeType::PRIMITIVE_TYPE: return "PRIMITIVE_TYPE";
+        case ASTNodeType::ARRAY_TYPE:     return "ARRAY_TYPE";
+        case ASTNodeType::RECORD_TYPE:    return "RECORD_TYPE";
+        case ASTNodeType::USER_TYPE:      return "USER_TYPE";
+        case ASTNodeType::BINARY_OP:      return "BINARY_OP";
+        case ASTNodeType::UNARY_OP:       return "UNARY_OP";
+        case ASTNodeType::LITERAL_INT:    return "LITERAL_INT";
+        case ASTNodeType::LITERAL_REAL:   return "LITERAL_REAL";
+        case ASTNodeType::LITERAL_BOOL:   return "LITERAL_BOOL";
+        case ASTNodeType::LITERAL_STRING: return "LITERAL_STRING";
+        case ASTNodeType::IDENTIFIER:     return "IDENTIFIER";
+        case ASTNodeType::ROUTINE_CALL:   return "ROUTINE_CALL";
+        case ASTNodeType::ARRAY_ACCESS:   return "ARRAY_ACCESS";
+        case ASTNodeType::MEMBER_ACCESS:  return "MEMBER_ACCESS";
+        case ASTNodeType::ASSIGNMENT:     return "ASSIGNMENT";
+        case ASTNodeType::PRINT_STMT:     return "PRINT_STMT";
+        case ASTNodeType::IF_STMT:        return "IF_STMT";
+        case ASTNodeType::WHILE_LOOP:     return "WHILE_LOOP";
+        case ASTNodeType::FOR_LOOP:       return "FOR_LOOP";
+        case ASTNodeType::RETURN_STMT:    return "RETURN_STMT";
+        case ASTNodeType::BODY:           return "BODY";
+        default:                          return "UNKNOWN";
     }
-bool WasmCompiler::compile(std::shared_ptr<ASTNode> ast, const std::string& filename) {
+}
+
+// ============================================================================
+// Public API
+// ============================================================================
+
+bool WasmCompiler::compile(std::shared_ptr<ASTNode> program,
+                           const std::string& filename) {
     std::cout << "🚀 COMPILING TO WASM: " << filename << std::endl;
-    
-    // Extract the actual return value from AST
-    int returnValue = extractReturnValueFromAST(ast);
-    std::cout << "🔍 EXTRACTED RETURN VALUE: " << returnValue << std::endl;
-    
-    // Find main function for type analysis
-    auto mainFunc = findMainFunction(ast);
+
+    auto mainFunc = findMainFunction(program);
     if (!mainFunc) {
-        std::cerr << "❌ No main function found!" << std::endl;
+        std::cerr << "❌ No main routine found in AST" << std::endl;
         return false;
     }
-    
-    std::ofstream file(filename, std::ios::binary);
-    if (!file) {
-        std::cerr << "❌ Cannot create file: " << filename << std::endl;
+
+    // Module buffer
+    std::vector<uint8_t> module;
+
+    // Magic + version
+    const uint8_t header[8] = {
+        0x00, 0x61, 0x73, 0x6d, // "\0asm"
+        0x01, 0x00, 0x00, 0x00  // version 1
+    };
+    module.insert(module.end(), header, header + 8);
+
+    auto typeSection     = buildTypeSection(mainFunc);
+    auto functionSection = buildFunctionSection();
+    auto exportSection   = buildExportSection();
+    auto codeSection     = buildCodeSection(mainFunc);
+
+    module.insert(module.end(), typeSection.begin(),     typeSection.end());
+    module.insert(module.end(), functionSection.begin(), functionSection.end());
+    module.insert(module.end(), exportSection.begin(),   exportSection.end());
+    module.insert(module.end(), codeSection.begin(),     codeSection.end());
+
+    std::ofstream out(filename, std::ios::binary);
+    if (!out) {
+        std::cerr << "❌ Failed to open " << filename << " for writing" << std::endl;
         return false;
     }
-    
-    // Pass mainFunc to generateWasmWithReturnValue for type analysis
-    generateWasmWithReturnValue(file, returnValue, mainFunc);
-    
-    std::cout << "✅ WROTE WASM returning: " << returnValue << std::endl;
+    out.write(reinterpret_cast<const char*>(module.data()), module.size());
+    out.close();
+
+    std::cout << "✅ WROTE WASM module (" << module.size() << " bytes)" << std::endl;
+    std::cout << "💡 You can run it with: wasmtime " << filename
+              << " --invoke main" << std::endl;
     return true;
 }
 
-void WasmCompiler::generateWasmWithReturnValue(std::ofstream& file, int returnValue, std::shared_ptr<ASTNode> mainFunc) {
-    std::cout << "🔧 BUILDING WASM SECTIONS DYNAMICALLY..." << std::endl;
-    
-    // WASM header
-    uint8_t header[] = {0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00};
-    file.write(reinterpret_cast<char*>(header), sizeof(header));
-    
-    // Build and write each section (pass mainFunc for type analysis)
-    auto typeSection = buildTypeSection(mainFunc);
-    file.write(reinterpret_cast<char*>(typeSection.data()), typeSection.size());
-    
-    auto functionSection = buildFunctionSection();
-    file.write(reinterpret_cast<char*>(functionSection.data()), functionSection.size());
-    
-    auto exportSection = buildExportSection();
-    file.write(reinterpret_cast<char*>(exportSection.data()), exportSection.size());
-    
-    auto codeSection = buildCodeSection(returnValue, mainFunc);
-    file.write(reinterpret_cast<char*>(codeSection.data()), codeSection.size());
-    
-    std::cout << "✅ DYNAMIC WASM GENERATION COMPLETE!" << std::endl;
-}
-
-std::vector<uint8_t> WasmCompiler::buildTypeSection(std::shared_ptr<ASTNode> mainFunc) {
-    std::cout << "  🔧 Building TYPE section from AST..." << std::endl;
-    
-    std::vector<uint8_t> section;
-    section.push_back(0x01); // Type section ID
-    
-    // Analyze function signature from AST
-    auto functionType = analyzeFunctionSignature(mainFunc);
-    
-    writeLeb128(section, functionType.size());
-    section.insert(section.end(), functionType.begin(), functionType.end());
-    
-    return section;
-}
-
-std::vector<uint8_t> WasmCompiler::analyzeFunctionSignature(std::shared_ptr<ASTNode> mainFunc) {
-    std::cout << "  🔍 Analyzing function signature..." << std::endl;
-    
-    std::vector<uint8_t> typeContents;
-    typeContents.push_back(0x01); // 1 type for now
-    
-    // Function type
-    typeContents.push_back(0x60); // func type
-    
-    // Analyze parameters
-    auto paramTypes = analyzeParameters(mainFunc);
-    writeLeb128(typeContents, paramTypes.size()); // param count
-    typeContents.insert(typeContents.end(), paramTypes.begin(), paramTypes.end());
-    
-    // Analyze return type  
-    auto returnTypes = analyzeReturnType(mainFunc);
-    writeLeb128(typeContents, returnTypes.size()); // return count
-    typeContents.insert(typeContents.end(), returnTypes.begin(), returnTypes.end());
-    
-    return typeContents;
-}
-
-std::vector<uint8_t> WasmCompiler::analyzeParameters(std::shared_ptr<ASTNode> mainFunc) {
-    std::cout << "  🔍 Analyzing parameters..." << std::endl;
-    
-    std::vector<uint8_t> paramTypes;
-    
-    // DEBUG: Show all children to find the parameter list
-    std::cout << "  🔍 Main function children:" << std::endl;
-    for (size_t i = 0; i < mainFunc->children.size(); ++i) {
-        auto child = mainFunc->children[i];
-        if (child) {
-            std::cout << "    [" << i << "] " << astNodeTypeToString(child->type) 
-                      << " value: '" << child->value << "'" << std::endl;
-        }
-    }
-    
-    // Look for PARAMETER_LIST in main function children
-    for (auto& child : mainFunc->children) {
-        if (child && child->type == ASTNodeType::PARAMETER_LIST) {
-            std::cout << "  ✅ Found PARAMETER_LIST with " << child->children.size() << " parameters" << std::endl;
-            
-            for (auto& param : child->children) {
-                if (param && param->type == ASTNodeType::PARAMETER) {
-                    // Extract parameter type
-                    auto wasmType = extractTypeFromParam(param);
-                    paramTypes.push_back(wasmType);
-                    std::cout << "    📊 Parameter '" << param->value << "' type: 0x" 
-                              << std::hex << (int)wasmType << std::dec << std::endl;
-                }
-            }
-            break;
-        }
-    }
-    
-    if (paramTypes.empty()) {
-        std::cout << "  ℹ️ No parameters found - using empty parameter list" << std::endl;
-    }
-    
-    return paramTypes;
-}
-
-std::vector<uint8_t> WasmCompiler::analyzeReturnType(std::shared_ptr<ASTNode> mainFunc) {
-    std::cout << "  🔍 Analyzing return type..." << std::endl;
-    
-    std::vector<uint8_t> returnTypes;
-    
-    // Look for return type declaration in main function children
-    bool foundReturnType = false;
-    
-    for (size_t i = 0; i < mainFunc->children.size(); ++i) {
-        auto child = mainFunc->children[i];
-        
-        if (child && child->type == ASTNodeType::USER_TYPE) {
-            std::cout << "  ✅ Found return type: " << child->value << std::endl;
-            auto wasmType = mapTypeToWasm(child->value);
-            returnTypes.push_back(wasmType);
-            foundReturnType = true;
-            break;
-        }
-    }
-    
-    // If no explicit return type, infer from return statement
-    if (!foundReturnType) {
-        std::cout << "  🔍 No explicit return type - inferring from return statement..." << std::endl;
-        auto inferredType = inferReturnTypeFromBody(mainFunc);
-        returnTypes.push_back(inferredType);
-    }
-    
-    return returnTypes;
-}
-
-uint8_t WasmCompiler::extractTypeFromParam(std::shared_ptr<ASTNode> param) {
-    if (!param || param->children.empty()) {
-        std::cout << "    ❌ Parameter has no type info - defaulting to i32" << std::endl;
-        return 0x7f; // i32
-    }
-    
-    auto typeNode = param->children[0];
-    if (!typeNode) {
-        return 0x7f; // i32 default
-    }
-    
-    if (typeNode->type == ASTNodeType::USER_TYPE) {
-        return mapTypeToWasm(typeNode->value);
-    } else if (typeNode->type == ASTNodeType::PRIMITIVE_TYPE) {
-        return mapTypeToWasm(typeNode->value);
-    }
-    
-    std::cout << "    ❓ Unknown parameter type - defaulting to i32" << std::endl;
-    return 0x7f; // i32 default
-}
-
-uint8_t WasmCompiler::inferReturnTypeFromBody(std::shared_ptr<ASTNode> mainFunc) {
-    // Look for return statement in body
-    for (auto& child : mainFunc->children) {
-        if (child && child->type == ASTNodeType::BODY) {
-            for (auto& stmt : child->children) {
-                if (stmt && stmt->type == ASTNodeType::RETURN_STMT) {
-                    if (!stmt->children.empty()) {
-                        auto returnExpr = stmt->children[0];
-                        if (returnExpr) {
-                            std::cout << "    🔍 Return expression: " 
-                                      << astNodeTypeToString(returnExpr->type) 
-                                      << " value: '" << returnExpr->value << "'" << std::endl;
-                            
-                            switch (returnExpr->type) {
-                                case ASTNodeType::LITERAL_INT:
-                                    std::cout << "    ✅ Inferred return type: i32 (from integer literal)" << std::endl;
-                                    return 0x7f; // i32
-                                case ASTNodeType::LITERAL_REAL:
-                                    std::cout << "    ✅ Inferred return type: f64 (from real literal)" << std::endl;
-                                    return 0x7c; // f64
-                                case ASTNodeType::LITERAL_BOOL:
-                                    std::cout << "    ✅ Inferred return type: i32 (from boolean literal)" << std::endl;
-                                    return 0x7f; // i32 (WASM uses i32 for bool)
-                                case ASTNodeType::IDENTIFIER:
-                                    std::cout << "    🔍 Identifier return - need type analysis" << std::endl;
-                                    return inferTypeFromIdentifier(returnExpr->value, mainFunc);
-                                default:
-                                    std::cout << "    ❓ Unknown return expression type: " 
-                                              << astNodeTypeToString(returnExpr->type) 
-                                              << " - defaulting to i32" << std::endl;
-                                    return 0x7f; // i32
-                            }
-                        }
-                    }
-                    break;
-                }
-            }
-            break;
-        }
-    }
-    
-    std::cout << "    ❓ Could not infer return type - defaulting to i32" << std::endl;
-    return 0x7f; // i32 default
-}
-
-uint8_t WasmCompiler::inferTypeFromIdentifier(const std::string& name, std::shared_ptr<ASTNode> mainFunc) {
-    std::cout << "    🔍 Inferring type for identifier: " << name << std::endl;
-    
-    // Check if it's a parameter
-    for (auto& child : mainFunc->children) {
-        if (child && child->type == ASTNodeType::PARAMETER_LIST) {
-            for (auto& param : child->children) {
-                if (param && param->type == ASTNodeType::PARAMETER && param->value == name) {
-                    auto wasmType = extractTypeFromParam(param);
-                    std::cout << "    ✅ Found parameter type: 0x" << std::hex << (int)wasmType << std::dec << std::endl;
-                    return wasmType;
-                }
-            }
-        }
-    }
-    
-    // TODO: Check local variables when we implement them
-    
-    std::cout << "    ❓ Unknown identifier type - defaulting to i32" << std::endl;
-    return 0x7f; // i32 default
-}
-
-uint8_t WasmCompiler::mapTypeToWasm(const std::string& typeName) {
-    if (typeName == "integer" || typeName == "int") {
-        return 0x7f; // i32
-    } else if (typeName == "real" || typeName == "float" || typeName == "double") {
-        return 0x7c; // f64
-    } else if (typeName == "boolean" || typeName == "bool") {
-        return 0x7f; // i32 (WASM uses i32 for bool)
-    } else {
-        std::cout << "    ❓ Unknown type '" << typeName << "' - defaulting to i32" << std::endl;
-        return 0x7f; // i32 default
-    }
-}
-
-std::vector<uint8_t> WasmCompiler::buildFunctionSection() {
-    std::cout << "  🔧 Building FUNCTION section..." << std::endl;
-    
-    std::vector<uint8_t> section;
-    section.push_back(0x03); // Function section ID
-    
-    // Function contents: 1 function using type index 0
-    std::vector<uint8_t> funcContents;
-    funcContents.push_back(0x01); // 1 function
-    funcContents.push_back(0x00); // type index 0
-    
-    writeLeb128(section, funcContents.size());
-    section.insert(section.end(), funcContents.begin(), funcContents.end());
-    
-    return section;
-}
-
-std::vector<uint8_t> WasmCompiler::buildExportSection() {
-    std::cout << "  🔧 Building EXPORT section..." << std::endl;
-    
-    std::vector<uint8_t> section;
-    section.push_back(0x07); // Export section ID
-    
-    // Export contents: export "main" function
-    std::vector<uint8_t> exportContents;
-    exportContents.push_back(0x01); // 1 export
-    
-    // Export "main" function
-    writeString(exportContents, "main");
-    exportContents.push_back(0x00); // export kind (function)
-    exportContents.push_back(0x00); // function index 0
-    
-    writeLeb128(section, exportContents.size());
-    section.insert(section.end(), exportContents.begin(), exportContents.end());
-    
-    return section;
-}
-
-std::vector<uint8_t> WasmCompiler::buildCodeSection(int returnValue, std::shared_ptr<ASTNode> mainFunc) {
-    std::cout << "  🔧 Building CODE section with locals..." << std::endl;
-    
-    std::vector<uint8_t> section;
-    section.push_back(0x0a); // Code section ID
-    
-    std::vector<uint8_t> codeContents;
-    codeContents.push_back(0x01); // 1 function
-    
-    // Analyze local variables
-    auto localTypes = analyzeLocalVariables(mainFunc);
-    
-    std::vector<uint8_t> funcBody;
-    
-    // Local variable declarations
-    if (!localTypes.empty()) {
-        writeLeb128(funcBody, localTypes.size()); // local count
-        for (auto type : localTypes) {
-            writeLeb128(funcBody, 1); // count of this type
-            funcBody.push_back(type); // type
-        }
-    } else {
-        funcBody.push_back(0x00); // 0 locals
-    }
-    
-    // Generate variable initialization and main logic
-    generateLocalVariableInitialization(funcBody, mainFunc);
-    generateMainLogic(funcBody, mainFunc);
-    
-    // CRITICAL: Add explicit return instruction if function has return type
-    auto returnTypes = analyzeReturnType(mainFunc);
-    if (!returnTypes.empty()) {
-        // If we have a return type, ensure there's a value on the stack
-        // The return is implicit in WASM - the value left on stack is returned
-        std::cout << "  🔧 Function has return type - ensuring return value on stack" << std::endl;
-    }
-    
-    // Add the end instruction for the function body
-    funcBody.push_back(0x0b); // end
-    
-    writeLeb128(codeContents, funcBody.size());
-    codeContents.insert(codeContents.end(), funcBody.begin(), funcBody.end());
-    
-    writeLeb128(section, codeContents.size());
-    section.insert(section.end(), codeContents.begin(), codeContents.end());
-    
-    return section;
-}
-
-void WasmCompiler::generateConstantInstruction(std::vector<uint8_t>& funcBody, uint8_t type, std::shared_ptr<ASTNode> mainFunc) {
-    // Extract the actual literal value from return statement
-    auto literalValue = extractLiteralValueFromReturn(mainFunc);
-    
-    switch (type) {
-        case 0x7f: // i32 (integer or boolean)
-            generateI32Constant(funcBody, literalValue, mainFunc);
-            break;
-        case 0x7c: // f64 (real)
-            generateF64Constant(funcBody, literalValue, mainFunc);
-            break;
-        default:
-            std::cout << "  ❓ Unknown type 0x" << std::hex << (int)type << std::dec 
-                      << " - defaulting to i32" << std::endl;
-            generateI32Constant(funcBody, literalValue, mainFunc);
-            break;
-    }
-    
-    funcBody.push_back(0x0b); // end
-}
-
-void WasmCompiler::generateI32Constant(std::vector<uint8_t>& funcBody, const std::string& value, std::shared_ptr<ASTNode> mainFunc) {
-    funcBody.push_back(0x41); // i32.const opcode
-    
-    // Check if it's boolean or integer
-    auto returnExpr = getReturnExpression(mainFunc);
-    if (returnExpr && returnExpr->type == ASTNodeType::LITERAL_BOOL) {
-        // Boolean: true=1, false=0
-        int boolValue = (value == "true") ? 1 : 0;
-        writeLeb128(funcBody, boolValue);
-        std::cout << "  🔍 Instructions: i32.const " << boolValue << " (boolean '" << value << "'), end" << std::endl;
-    } else {
-        // Integer
-        try {
-            int intValue = std::stoi(value);
-            writeLeb128(funcBody, intValue);
-            std::cout << "  🔍 Instructions: i32.const " << intValue << " (integer), end" << std::endl;
-        } catch (...) {
-            std::cout << "  ❌ Failed to parse integer: " << value << " - using 0" << std::endl;
-            writeLeb128(funcBody, 0);
-        }
-    }
-}
-
-void WasmCompiler::generateF64Constant(std::vector<uint8_t>& funcBody, const std::string& value, std::shared_ptr<ASTNode> mainFunc) {
-    funcBody.push_back(0x44); // f64.const opcode
-    
-    try {
-        double realValue = std::stod(value);
-        
-        // Convert double to 8 bytes (IEEE 754)
-        uint64_t bits;
-        memcpy(&bits, &realValue, sizeof(bits));
-        
-        // Write little-endian bytes
-        for (int i = 0; i < 8; i++) {
-            funcBody.push_back((bits >> (i * 8)) & 0xFF);
-        }
-        
-        std::cout << "  🔍 Instructions: f64.const " << realValue << " (real), end" << std::endl;
-        
-    } catch (...) {
-        std::cout << "  ❌ Failed to parse real: " << value << " - using 0.0" << std::endl;
-        // Write 0.0 as double
-        for (int i = 0; i < 8; i++) {
-            funcBody.push_back(0x00);
-        }
-    }
-}
-
-std::string WasmCompiler::extractLiteralValueFromReturn(std::shared_ptr<ASTNode> mainFunc) {
-    // Find return statement and extract the literal value
-    for (auto& child : mainFunc->children) {
-        if (child && child->type == ASTNodeType::BODY) {
-            for (auto& stmt : child->children) {
-                if (stmt && stmt->type == ASTNodeType::RETURN_STMT) {
-                    if (!stmt->children.empty()) {
-                        auto returnExpr = stmt->children[0];
-                        if (returnExpr && (returnExpr->type == ASTNodeType::LITERAL_INT || 
-                                          returnExpr->type == ASTNodeType::LITERAL_REAL ||
-                                          returnExpr->type == ASTNodeType::LITERAL_BOOL)) {
-                            return returnExpr->value;
-                        }
-                    }
-                    break;
-                }
-            }
-            break;
-        }
-    }
-    return "0"; // fallback
-}
-
-std::shared_ptr<ASTNode> WasmCompiler::getReturnExpression(std::shared_ptr<ASTNode> mainFunc) {
-    for (auto& child : mainFunc->children) {
-        if (child && child->type == ASTNodeType::BODY) {
-            for (auto& stmt : child->children) {
-                if (stmt && stmt->type == ASTNodeType::RETURN_STMT) {
-                    if (!stmt->children.empty()) {
-                        return stmt->children[0];
-                    }
-                    break;
-                }
-            }
-            break;
-        }
-    }
-    return nullptr;
-}
-
-bool WasmCompiler::shouldGenerateParameterAccess(std::shared_ptr<ASTNode> mainFunc) {
-    // Check if function has parameters
-    bool hasParams = false;
-    for (auto& child : mainFunc->children) {
-        if (child && child->type == ASTNodeType::PARAMETER_LIST) {
-            hasParams = !child->children.empty();
-            break;
-        }
-    }
-    
-    if (!hasParams) return false;
-    
-    // Check if return statement uses a parameter
-    for (auto& child : mainFunc->children) {
-        if (child && child->type == ASTNodeType::BODY) {
-            for (auto& stmt : child->children) {
-                if (stmt && stmt->type == ASTNodeType::RETURN_STMT) {
-                    if (!stmt->children.empty()) {
-                        auto returnExpr = stmt->children[0];
-                        if (returnExpr && returnExpr->type == ASTNodeType::IDENTIFIER) {
-                            std::cout << "  ✅ Return statement uses parameter: " << returnExpr->value << std::endl;
-                            return true;
-                        }
-                    }
-                    break;
-                }
-            }
-            break;
-        }
-    }
-    
-    return false;
-}
-void WasmCompiler::writeLeb128(std::vector<uint8_t>& vec, uint32_t value) {
-    do {
-        uint8_t byte = value & 0x7F;
-        value >>= 7;
-        if (value != 0) byte |= 0x80;
-        vec.push_back(byte);
-    } while (value != 0);
-}
-
-void WasmCompiler::writeString(std::vector<uint8_t>& vec, const std::string& str) {
-    writeLeb128(vec, str.length());
-    for (char c : str) {
-        vec.push_back(static_cast<uint8_t>(c));
-    }
-}
-
-std::vector<uint8_t> WasmCompiler::analyzeLocalVariables(std::shared_ptr<ASTNode> mainFunc) {
-    std::cout << "  🔍 Analyzing local variables..." << std::endl;
-    
-    std::vector<uint8_t> localTypes;
-    localVarIndices.clear();
-    
-    // Start local indices after parameters
-    int localIndex = countParameters(mainFunc); 
-    
-    // Find the BODY node in main function
-    for (auto& child : mainFunc->children) {
-        if (child && child->type == ASTNodeType::BODY) {
-            // Scan for VAR_DECL nodes in the body
-            for (auto& stmt : child->children) {
-                if (stmt && stmt->type == ASTNodeType::VAR_DECL) {
-                    std::string varName = stmt->value;
-                    uint8_t varType = inferLocalVariableType(stmt);
-                    
-                    // Track this local variable
-                    localVarIndices[varName] = localIndex++;
-                    localTypes.push_back(varType);
-                    
-                    std::cout << "    📊 Local variable '" << varName 
-                              << "' -> local[" << localVarIndices[varName] 
-                              << "], type: 0x" << std::hex << (int)varType << std::dec << std::endl;
-                }
-            }
-            break;
-        }
-    }
-    
-    return localTypes;
-}
-uint8_t WasmCompiler::inferLocalVariableType(std::shared_ptr<ASTNode> varDecl) {
-    if (!varDecl || varDecl->children.empty()) {
-        return 0x7f; // i32 default
-    }
-    
-    // Check type declaration (first child)
-    auto typeNode = varDecl->children[0];
-    if (typeNode) {
-        if (typeNode->type == ASTNodeType::PRIMITIVE_TYPE) {
-            return mapTypeToWasm(typeNode->value);
-        } else if (typeNode->type == ASTNodeType::USER_TYPE) {
-            return mapTypeToWasm(typeNode->value);
-        }
-    }
-    
-    // Check initialization expression for type inference
-    if (varDecl->children.size() > 1) {
-        auto initExpr = varDecl->children[1];
-        if (initExpr) {
-            switch (initExpr->type) {
-                case ASTNodeType::LITERAL_INT: return 0x7f; // i32
-                case ASTNodeType::LITERAL_REAL: return 0x7c; // f64  
-                case ASTNodeType::LITERAL_BOOL: return 0x7f; // i32
-                default: break;
-            }
-        }
-    }
-    
-    return 0x7f; // i32 default
-}
-
-int WasmCompiler::countParameters(std::shared_ptr<ASTNode> mainFunc) {
-    int paramCount = 0;
-    for (auto& child : mainFunc->children) {
-        if (child && child->type == ASTNodeType::PARAMETER_LIST) {
-            paramCount = child->children.size();
-            break;
-        }
-    }
-    std::cout << "  🔍 Found " << paramCount << " parameters" << std::endl;
-    return paramCount;
-}
-
-void WasmCompiler::generateLocalVariableInitialization(std::vector<uint8_t>& funcBody, std::shared_ptr<ASTNode> mainFunc) {
-    std::cout << "  🔧 Generating local variable initialization..." << std::endl;
-    
-    // Find the BODY node
-    for (auto& child : mainFunc->children) {
-        if (child && child->type == ASTNodeType::BODY) {
-            // Process each statement to find variable declarations with initializers
-            for (auto& stmt : child->children) {
-                if (stmt && stmt->type == ASTNodeType::VAR_DECL && stmt->children.size() > 1) {
-                    // This variable has an initializer!
-                    std::string varName = stmt->value;
-                    auto initExpr = stmt->children[1]; // Second child is initializer
-                    
-                    if (initExpr) {
-                        std::cout << "    🔧 Initializing variable '" << varName << "'" << std::endl;
-                        
-                        // Generate the initialization expression
-                        generateExpression(funcBody, initExpr, mainFunc);
-                        
-                        // Store to local variable
-                        int varIndex = localVarIndices[varName];
-                        funcBody.push_back(0x21); // local.set
-                        writeLeb128(funcBody, varIndex);
-                    }
-                }
-            }
-            break;
-        }
-    }
-}
-
-
-void WasmCompiler::generateMainLogic(std::vector<uint8_t>& funcBody, std::shared_ptr<ASTNode> mainFunc) {
-    std::cout << "  🔧 Generating main logic..." << std::endl;
-    
-    bool hasReturn = false;
-    
-    // Find the BODY node
-    for (auto& child : mainFunc->children) {
-        if (child && child->type == ASTNodeType::BODY) {
-            // Process each statement (skip VAR_DECL since we handled initialization)
-            for (auto& stmt : child->children) {
-                if (!stmt) continue;
-                
-                switch (stmt->type) {
-                    case ASTNodeType::ASSIGNMENT:
-                        generateAssignment(funcBody, stmt, mainFunc);
-                        break;
-                    case ASTNodeType::RETURN_STMT:
-                        generateReturnStatement(funcBody, stmt, mainFunc);
-                        hasReturn = true;
-                        break;
-                    case ASTNodeType::VAR_DECL:
-                        // Already handled in initialization - skip
-                        break;
-                    default:
-                        std::cout << "    ⚠️  Unhandled statement type: " 
-                                  << astNodeTypeToString(stmt->type) << std::endl;
-                        break;
-                }
-            }
-            break;
-        }
-    }
-    
-    // If no explicit return statement, generate default return value based on return type
-    if (!hasReturn) {
-        auto returnTypes = analyzeReturnType(mainFunc);
-        if (!returnTypes.empty()) {
-            uint8_t returnType = returnTypes[0];
-            std::cout << "  🔧 No return statement found - generating default return for type 0x" 
-                      << std::hex << (int)returnType << std::dec << std::endl;
-            
-            switch (returnType) {
-                case 0x7c: // f64
-                    generateRealLiteral(funcBody, "0.0");
-                    break;
-                case 0x7f: // i32
-                default:
-                    funcBody.push_back(0x41); // i32.const 0
-                    writeLeb128(funcBody, 0);
-                    break;
-            }
-        } else {
-            // No return type - use i32 default
-            funcBody.push_back(0x41); // i32.const 0
-            writeLeb128(funcBody, 0);
-        }
-    }
-}
-
-void WasmCompiler::generateExpression(std::vector<uint8_t>& funcBody, std::shared_ptr<ASTNode> expr, std::shared_ptr<ASTNode> mainFunc) {
-    if (!expr) return;
-    
-    switch (expr->type) {
-        case ASTNodeType::LITERAL_INT:
-            funcBody.push_back(0x41); // i32.const
-            writeLeb128(funcBody, std::stoi(expr->value));
-            std::cout << "    🔧 Generated i32.const " << expr->value << std::endl;
-            break;
-        case ASTNodeType::LITERAL_BOOL: {
-            funcBody.push_back(0x41); // i32.const (WASM uses i32 for bool)
-            int boolValue = (expr->value == "true") ? 1 : 0;
-            writeLeb128(funcBody, boolValue);
-            std::cout << "    🔧 Generated i32.const " << boolValue << " (bool: " << expr->value << ")" << std::endl;
-            break;
-        }
-        case ASTNodeType::BINARY_OP:
-            generateBinaryOperation(funcBody, expr, mainFunc);
-            break;
-        case ASTNodeType::LITERAL_REAL:
-            generateRealLiteral(funcBody, expr->value);
-            break;
-        case ASTNodeType::IDENTIFIER:
-            generateVariableLoad(funcBody, expr->value, mainFunc);
-            break;
-        default:
-            std::cout << "    ⚠️  Unhandled expression type: " 
-                      << astNodeTypeToString(expr->type) << std::endl;
-            // Generate a default value to avoid empty expression
-            funcBody.push_back(0x41); // i32.const 0
-            writeLeb128(funcBody, 0);
-            break;
-    }
-}
-void WasmCompiler::generateBinaryOperation(std::vector<uint8_t>& funcBody, std::shared_ptr<ASTNode> binaryOp, std::shared_ptr<ASTNode> mainFunc) {
-    if (binaryOp->children.size() < 2) {
-        std::cout << "    ❌ Binary operation missing operands!" << std::endl;
-        return;
-    }
-    
-    auto left = binaryOp->children[0];
-    auto right = binaryOp->children[1];
-    
-    std::cout << "    🔧 Generating binary operation: " << binaryOp->value << std::endl;
-    std::cout << "      Left: " << astNodeTypeToString(left->type) << " '" << left->value << "'" << std::endl;
-    std::cout << "      Right: " << astNodeTypeToString(right->type) << " '" << right->value << "'" << std::endl;
-    
-    // Generate left expression
-    generateExpression(funcBody, left, mainFunc);
-    
-    // Generate right expression  
-    generateExpression(funcBody, right, mainFunc);
-    
-    // Generate the operation based on the operator
-    std::string op = binaryOp->value;
-    
-    // TODO: Add type detection - for now assume all integers
-    if (op == "+") {
-        funcBody.push_back(0x6a); // i32.add
-        std::cout << "    🔧 Generated i32.add" << std::endl;
-    } else if (op == "-") {
-        funcBody.push_back(0x6b); // i32.sub
-        std::cout << "    🔧 Generated i32.sub" << std::endl;
-    } else if (op == "*") {
-        funcBody.push_back(0x6c); // i32.mul
-        std::cout << "    🔧 Generated i32.mul" << std::endl;
-    } else if (op == "/") {
-        funcBody.push_back(0x6d); // i32.div_s
-        std::cout << "    🔧 Generated i32.div_s" << std::endl;
-    } else {
-        std::cout << "    ⚠️  Unhandled binary operator: " << op << std::endl;
-        funcBody.push_back(0x6a); // Default to add
-    }
-}
-void WasmCompiler::generateRealLiteral(std::vector<uint8_t>& funcBody, const std::string& value) {
-    funcBody.push_back(0x44); // f64.const opcode
-    
-    try {
-        double realValue = std::stod(value);
-        
-        // Convert double to 8 bytes (IEEE 754)
-        uint64_t bits;
-        memcpy(&bits, &realValue, sizeof(bits));
-        
-        // Write little-endian bytes
-        for (int i = 0; i < 8; i++) {
-            funcBody.push_back((bits >> (i * 8)) & 0xFF);
-        }
-        
-        std::cout << "    🔧 Generated f64.const " << realValue << std::endl;
-        
-    } catch (...) {
-        std::cout << "    ❌ Failed to parse real: " << value << " - using 0.0" << std::endl;
-        // Write 0.0 as double
-        for (int i = 0; i < 8; i++) {
-            funcBody.push_back(0x00);
-        }
-    }
-}
-
-void WasmCompiler::generateVariableLoad(std::vector<uint8_t>& funcBody, const std::string& varName, std::shared_ptr<ASTNode> mainFunc) {
-    if (localVarIndices.find(varName) != localVarIndices.end()) {
-        // It's a local variable
-        int varIndex = localVarIndices[varName];
-        funcBody.push_back(0x20); // local.get
-        writeLeb128(funcBody, varIndex);
-        std::cout << "    🔧 Loading local variable '" << varName << "' from local[" << varIndex << "]" << std::endl;
-    } else {
-        // Check if it's a parameter
-        // TODO: Implement parameter lookup
-        std::cout << "    ⚠️  Variable '" << varName << "' not found in locals" << std::endl;
-    }
-}
-
-void WasmCompiler::generateAssignment(std::vector<uint8_t>& funcBody, std::shared_ptr<ASTNode> assignment, std::shared_ptr<ASTNode> mainFunc) {
-    if (assignment->children.size() < 2) return;
-    
-    auto target = assignment->children[0];
-    auto value = assignment->children[1];
-    
-    if (target->type == ASTNodeType::IDENTIFIER) {
-        // Generate the value expression
-        generateExpression(funcBody, value, mainFunc);
-        
-        // Store to variable
-        std::string varName = target->value;
-        if (localVarIndices.find(varName) != localVarIndices.end()) {
-            int varIndex = localVarIndices[varName];
-            funcBody.push_back(0x21); // local.set
-            writeLeb128(funcBody, varIndex);
-            std::cout << "    🔧 Storing to local variable '" << varName << "' at local[" << varIndex << "]" << std::endl;
-        }
-    }
-}
-
-void WasmCompiler::generateReturnStatement(std::vector<uint8_t>& funcBody, std::shared_ptr<ASTNode> returnStmt, std::shared_ptr<ASTNode> mainFunc) {
-    if (!returnStmt->children.empty()) {
-        auto returnExpr = returnStmt->children[0];
-        
-        // Get the expected return type to ensure consistency
-        auto returnTypes = analyzeReturnType(mainFunc);
-        uint8_t expectedType = returnTypes.empty() ? 0x7f : returnTypes[0]; // default to i32
-        
-        generateExpression(funcBody, returnExpr, mainFunc);
-        
-        // TODO: Add type conversion if needed
-        // For now, we rely on generateExpression to generate the correct type
-        
-        std::cout << "    🔧 Generated return expression (expected type: 0x" 
-                  << std::hex << (int)expectedType << std::dec << ")" << std::endl;
-    } else {
-        // Empty return - generate default value based on return type
-        auto returnTypes = analyzeReturnType(mainFunc);
-        if (!returnTypes.empty()) {
-            uint8_t returnType = returnTypes[0];
-            std::cout << "    🔧 Empty return - generating default value for type 0x" 
-                      << std::hex << (int)returnType << std::dec << std::endl;
-            
-            switch (returnType) {
-                case 0x7c: // f64
-                    generateRealLiteral(funcBody, "0.0");
-                    break;
-                case 0x7f: // i32
-                default:
-                    funcBody.push_back(0x41); // i32.const 0
-                    writeLeb128(funcBody, 0);
-                    break;
-            }
-        }
-    }
-    // Return is implicit in WASM - value is left on stack
-}
-
-int WasmCompiler::extractReturnValueFromAST(std::shared_ptr<ASTNode> ast) {
-    std::cout << "🔍 SEARCHING FOR MAIN FUNCTION IN AST..." << std::endl;
-    
-    if (!ast || ast->type != ASTNodeType::PROGRAM) {
-        std::cout << "❌ Invalid AST structure!" << std::endl;
-        return 42;
-    }
-    
-    std::cout << "📊 PROGRAM has " << ast->children.size() << " children" << std::endl;
-    
-    auto mainFunc = findMainFunction(ast);
-    if (!mainFunc) {
-        std::cout << "❌ No main function found!" << std::endl;
-        return 42;
-    }
-    
-    std::cout << "✅ FOUND main function!" << std::endl;
-    return extractIntegerFromReturn(mainFunc);
-}
+// ============================================================================
+// Main routine and types
+// ============================================================================
 
 std::shared_ptr<ASTNode> WasmCompiler::findMainFunction(std::shared_ptr<ASTNode> program) {
-    for (size_t i = 0; i < program->children.size(); ++i) {
-        auto child = program->children[i];
-        if (!child) continue;
-        
-        std::cout << "  🔍 Child " << i << ": " << astNodeTypeToString(child->type) 
-                  << " value: '" << child->value << "'" << std::endl;
-        
-        if (child->type == ASTNodeType::ROUTINE_DECL && child->value == "main") {
-            std::cout << "  ✅ FOUND main routine!" << std::endl;
+    if (!program || program->type != ASTNodeType::PROGRAM) return nullptr;
+
+    for (auto& child : program->children) {
+        if (child &&
+            child->type == ASTNodeType::ROUTINE_DECL &&
+            child->value == "main") {
+            std::cout << "✅ FOUND main routine!" << std::endl;
             return child;
         }
     }
+    std::cout << "❌ main routine not found" << std::endl;
     return nullptr;
 }
 
-int WasmCompiler::extractIntegerFromReturn(std::shared_ptr<ASTNode> mainFunc) {
-    std::cout << "🔍 EXTRACTING RETURN VALUE FROM MAIN FUNCTION..." << std::endl;
-    
-    if (mainFunc->children.empty()) {
-        std::cout << "❌ Main function has no children!" << std::endl;
-        return 42;
+// Map primitive type names to WASM value types
+uint8_t WasmCompiler::mapPrimitiveToWasm(const std::string& typeName) {
+    if (typeName == "integer" || typeName == "boolean") {
+        return 0x7f; // i32
+    } else if (typeName == "real") {
+        return 0x7c; // f64
     }
-    
-    // Find the BODY node
+    return 0x7f; // fallback i32
+}
+
+// For now: always return i32 type for main
+uint8_t WasmCompiler::inferReturnType(std::shared_ptr<ASTNode> /*mainFunc*/) {
+    return 0x7f; // i32
+}
+
+// ============================================================================
+// LEB128 and strings
+// ============================================================================
+
+void WasmCompiler::writeLeb128(std::vector<uint8_t>& buf, uint32_t value) {
+    do {
+        uint8_t byte = value & 0x7f;
+        value >>= 7;
+        if (value != 0) byte |= 0x80;
+        buf.push_back(byte);
+    } while (value != 0);
+}
+
+void WasmCompiler::writeString(std::vector<uint8_t>& buf, const std::string& s) {
+    writeLeb128(buf, static_cast<uint32_t>(s.size()));
+    buf.insert(buf.end(), s.begin(), s.end());
+}
+
+// ============================================================================
+// Sections
+// ============================================================================
+
+// Type section: one function type for main: () -> i32
+std::vector<uint8_t> WasmCompiler::buildTypeSection(std::shared_ptr<ASTNode> mainFunc) {
+    uint8_t retType = inferReturnType(mainFunc);
+
+    std::vector<uint8_t> payload;
+    // type count
+    writeLeb128(payload, 1);
+    // func type
+    payload.push_back(0x60); // func
+    // param count = 0 (no params in tests)
+    writeLeb128(payload, 0);
+    // result types
+    if (retType == 0x40) {
+        writeLeb128(payload, 0); // no result
+    } else {
+        writeLeb128(payload, 1);
+        payload.push_back(retType);
+    }
+
+    std::vector<uint8_t> section;
+    section.push_back(0x01); // Type section id
+    writeLeb128(section, static_cast<uint32_t>(payload.size()));
+    section.insert(section.end(), payload.begin(), payload.end());
+    return section;
+}
+
+// Function section: one function using type 0
+std::vector<uint8_t> WasmCompiler::buildFunctionSection() {
+    std::vector<uint8_t> payload;
+    writeLeb128(payload, 1); // function count
+    writeLeb128(payload, 0); // type index 0
+
+    std::vector<uint8_t> section;
+    section.push_back(0x03); // Function section
+    writeLeb128(section, static_cast<uint32_t>(payload.size()));
+    section.insert(section.end(), payload.begin(), payload.end());
+    return section;
+}
+
+// Export section: export "main" as function 0
+std::vector<uint8_t> WasmCompiler::buildExportSection() {
+    std::vector<uint8_t> payload;
+    writeLeb128(payload, 1);          // export count
+    writeString(payload, "main");     // name
+    payload.push_back(0x00);          // kind: func
+    writeLeb128(payload, 0);          // func index
+
+    std::vector<uint8_t> section;
+    section.push_back(0x07); // Export section
+    writeLeb128(section, static_cast<uint32_t>(payload.size()));
+    section.insert(section.end(), payload.begin(), payload.end());
+    return section;
+}
+
+// Code section: one function body for main
+std::vector<uint8_t> WasmCompiler::buildCodeSection(std::shared_ptr<ASTNode> mainFunc) {
+    std::vector<uint8_t> body;
+
+    // Reset locals
+    localVarIndices.clear();
+    nextLocalIndex = 0;
+
+    // Local declarations
+    auto localsHeader = analyzeLocalVariables(mainFunc);
+    body.insert(body.end(), localsHeader.begin(), localsHeader.end());
+
+    // Local variable initialization
+    generateLocalVariableInitialization(body, mainFunc);
+
+    // Main logic: assignments, if/while, return
+    generateMainLogic(body, mainFunc);
+
+    // Fallback: in case some path reaches end without return, push 0 and return
+    generateI32Const(body, 0);
+    body.push_back(0x0f); // return
+
+    // End of function body
+    body.push_back(0x0b); // end
+
+    // Wrap into code section
+    std::vector<uint8_t> payload;
+    writeLeb128(payload, 1); // function count
+
+    std::vector<uint8_t> funcEntry;
+    writeLeb128(funcEntry, static_cast<uint32_t>(body.size()));
+    funcEntry.insert(funcEntry.end(), body.begin(), body.end());
+
+    payload.insert(payload.end(), funcEntry.begin(), funcEntry.end());
+
+    std::vector<uint8_t> section;
+    section.push_back(0x0a); // Code section
+    writeLeb128(section, static_cast<uint32_t>(payload.size()));
+    section.insert(section.end(), payload.begin(), payload.end());
+    return section;
+}
+
+// ============================================================================
+// Locals and initialization
+// ============================================================================
+
+std::vector<uint8_t> WasmCompiler::analyzeLocalVariables(std::shared_ptr<ASTNode> mainFunc) {
+    std::vector<uint8_t> buf;
+    std::vector<std::pair<uint32_t,uint8_t>> locals; // (count, type)
+
+    // Find BODY
     std::shared_ptr<ASTNode> body = nullptr;
     for (auto& child : mainFunc->children) {
         if (child && child->type == ASTNodeType::BODY) {
@@ -934,64 +254,419 @@ int WasmCompiler::extractIntegerFromReturn(std::shared_ptr<ASTNode> mainFunc) {
             break;
         }
     }
-    
-    if (!body || body->type != ASTNodeType::BODY || body->children.empty()) {
-        std::cout << "❌ Invalid body structure!" << std::endl;
-        return 42;
+    if (!body) {
+        writeLeb128(buf, 0); // no locals
+        return buf;
     }
-    
-    auto returnStmt = body->children[0];
-    if (!returnStmt || returnStmt->type != ASTNodeType::RETURN_STMT || returnStmt->children.empty()) {
-        std::cout << "❌ Invalid return statement!" << std::endl;
-        return 42;
-    }
-    
-    auto returnExpr = returnStmt->children[0];
-    if (!returnExpr) {
-        std::cout << "❌ Return expression is null!" << std::endl;
-        return 42;
-    }
-    
-    std::cout << "🔍 Return expression: " << astNodeTypeToString(returnExpr->type) 
-              << " value: '" << returnExpr->value << "'" << std::endl;
-    
-    // Handle boolean literals
-    if (returnExpr->type == ASTNodeType::LITERAL_BOOL) {
-        int value = (returnExpr->value == "true") ? 1 : 0;
-        std::cout << "✅ EXTRACTED BOOLEAN: " << returnExpr->value << " -> " << value << std::endl;
-        return value;
-    }
-    
-    // Handle real literals - for extraction purposes, we can return the integer part
-    if (returnExpr->type == ASTNodeType::LITERAL_REAL) {
-        try {
-            // For extraction, we return integer part, but codegen will use the actual real value
-            double realValue = std::stod(returnExpr->value);
-            std::cout << "✅ EXTRACTED REAL: " << realValue << " (using integer part for extraction)" << std::endl;
-            return static_cast<int>(realValue);
-        } catch (...) {
-            std::cout << "❌ Failed to parse real: " << returnExpr->value << std::endl;
-            return 42;
+
+    // Each VAR_DECL -> one i32 local (integer/boolean)
+    for (auto& stmt : body->children) {
+        if (!stmt) continue;
+        if (stmt->type != ASTNodeType::VAR_DECL) continue;
+
+        const std::string& name = stmt->value;
+        if (localVarIndices.find(name) == localVarIndices.end()) {
+            localVarIndices[name] = nextLocalIndex++;
+            locals.push_back({1, 0x7f}); // i32
         }
     }
-    
-    // If we're returning a parameter (IDENTIFIER), we can't extract a hardcoded value!
-    if (returnExpr->type == ASTNodeType::IDENTIFIER) {
-        std::cout << "✅ Returning parameter: " << returnExpr->value << " - no hardcoded value needed!" << std::endl;
-        return 0; // This value won't be used since we'll generate get_local instead
+
+    writeLeb128(buf, static_cast<uint32_t>(locals.size()));
+    for (auto& p : locals) {
+        writeLeb128(buf, p.first); // count
+        buf.push_back(p.second);   // type
     }
-    
-    if (returnExpr->type == ASTNodeType::LITERAL_INT) {
-        try {
-            int value = std::stoi(returnExpr->value);
-            std::cout << "✅ EXTRACTED INTEGER: " << value << std::endl;
-            return value;
-        } catch (...) {
-            std::cout << "❌ Failed to parse integer: " << returnExpr->value << std::endl;
-            return 42;
+    return buf;
+}
+
+void WasmCompiler::generateLocalVariableInitialization(std::vector<uint8_t>& body,
+                                                       std::shared_ptr<ASTNode> mainFunc) {
+    // Find BODY
+    std::shared_ptr<ASTNode> mainBody = nullptr;
+    for (auto& child : mainFunc->children) {
+        if (child && child->type == ASTNodeType::BODY) {
+            mainBody = child;
+            break;
         }
+    }
+    if (!mainBody) return;
+
+    for (auto& stmt : mainBody->children) {
+        if (!stmt) continue;
+        if (stmt->type != ASTNodeType::VAR_DECL) continue;
+
+        const std::string& varName = stmt->value;
+        auto it = localVarIndices.find(varName);
+        if (it == localVarIndices.end()) continue;
+
+        // children: [typeNode, initExpr]
+        if (stmt->children.size() < 2) continue;
+        auto initExpr = stmt->children[1];
+        if (!initExpr) continue;
+
+        generateExpression(body, initExpr, mainFunc);
+        body.push_back(0x21); // local.set
+        writeLeb128(body, static_cast<uint32_t>(it->second));
+    }
+}
+
+// ============================================================================
+// Statements
+// ============================================================================
+
+void WasmCompiler::generateMainLogic(std::vector<uint8_t>& body,
+                                     std::shared_ptr<ASTNode> mainFunc) {
+    std::cout << " 🔧 Generating main logic..." << std::endl;
+
+    // Find BODY
+    std::shared_ptr<ASTNode> mainBody = nullptr;
+    for (auto& child : mainFunc->children) {
+        if (child && child->type == ASTNodeType::BODY) {
+            mainBody = child;
+            break;
+        }
+    }
+    if (!mainBody) {
+        std::cout << "⚠️ No BODY in main" << std::endl;
+        return;
+    }
+
+    for (auto& stmt : mainBody->children) {
+        if (!stmt) continue;
+        std::cout << "  🔍 Statement node: "
+                  << astNodeTypeToString(stmt->type) << std::endl;
+
+        switch (stmt->type) {
+            case ASTNodeType::ASSIGNMENT:
+                generateAssignment(body, stmt, mainFunc);
+                break;
+            case ASTNodeType::RETURN_STMT:
+                generateReturn(body, stmt, mainFunc);
+                break;
+            case ASTNodeType::IF_STMT:
+                generateIfStatement(body, stmt, mainFunc);
+                break;
+            case ASTNodeType::WHILE_LOOP:
+                generateWhileLoop(body, stmt, mainFunc);
+                break;
+            case ASTNodeType::VAR_DECL:
+                // initialization already done
+                break;
+            default:
+                std::cout << "  ⚠️ Unhandled statement type in WASM backend: "
+                          << astNodeTypeToString(stmt->type) << std::endl;
+                break;
+        }
+    }
+}
+
+void WasmCompiler::generateIfStatement(std::vector<uint8_t>& body,
+                                       std::shared_ptr<ASTNode> ifStmt,
+                                       std::shared_ptr<ASTNode> mainFunc) {
+    if (!ifStmt || ifStmt->children.size() < 2) {
+        std::cout << "⚠️ Malformed IF_STMT node\n";
+        return;
+    }
+
+    auto cond     = ifStmt->children[0];
+    auto thenBody = ifStmt->children[1];
+    std::shared_ptr<ASTNode> elseBody =
+        (ifStmt->children.size() > 2) ? ifStmt->children[2] : nullptr;
+
+    generateExpression(body, cond, mainFunc); // condition (i32)
+
+    body.push_back(0x04); // if
+    body.push_back(0x40); // block type: empty
+
+    // THEN
+    if (thenBody && thenBody->type == ASTNodeType::BODY) {
+        for (auto& stmt : thenBody->children) {
+            if (!stmt) continue;
+            switch (stmt->type) {
+                case ASTNodeType::ASSIGNMENT:
+                    generateAssignment(body, stmt, mainFunc);
+                    break;
+                case ASTNodeType::RETURN_STMT:
+                    generateReturn(body, stmt, mainFunc);
+                    break;
+                case ASTNodeType::IF_STMT:
+                    generateIfStatement(body, stmt, mainFunc);
+                    break;
+                case ASTNodeType::WHILE_LOOP:
+                    generateWhileLoop(body, stmt, mainFunc);
+                    break;
+                case ASTNodeType::VAR_DECL:
+                    break;
+                default:
+                    std::cout << "  ⚠️ Unhandled THEN stmt: "
+                              << astNodeTypeToString(stmt->type) << std::endl;
+                    break;
+            }
+        }
+    }
+
+    // ELSE
+    if (elseBody) {
+        body.push_back(0x05); // else
+        if (elseBody->type == ASTNodeType::BODY) {
+            for (auto& stmt : elseBody->children) {
+                if (!stmt) continue;
+                switch (stmt->type) {
+                    case ASTNodeType::ASSIGNMENT:
+                        generateAssignment(body, stmt, mainFunc);
+                        break;
+                    case ASTNodeType::RETURN_STMT:
+                        generateReturn(body, stmt, mainFunc);
+                        break;
+                    case ASTNodeType::IF_STMT:
+                        generateIfStatement(body, stmt, mainFunc);
+                        break;
+                    case ASTNodeType::WHILE_LOOP:
+                        generateWhileLoop(body, stmt, mainFunc);
+                        break;
+                    case ASTNodeType::VAR_DECL:
+                        break;
+                    default:
+                        std::cout << "  ⚠️ Unhandled ELSE stmt: "
+                                  << astNodeTypeToString(stmt->type) << std::endl;
+                        break;
+                }
+            }
+        }
+    }
+
+    body.push_back(0x0b); // end
+}
+
+void WasmCompiler::generateWhileLoop(std::vector<uint8_t>& body,
+                                     std::shared_ptr<ASTNode> whileStmt,
+                                     std::shared_ptr<ASTNode> mainFunc) {
+    if (!whileStmt || whileStmt->children.size() < 2) {
+        std::cout << "⚠️ Malformed WHILE_LOOP node\n";
+        return;
+    }
+
+    auto cond     = whileStmt->children[0];
+    auto loopBody = whileStmt->children[1];
+
+    body.push_back(0x02); // block
+    body.push_back(0x40); // void
+
+    body.push_back(0x03); // loop
+    body.push_back(0x40); // void
+
+    // condition
+    generateExpression(body, cond, mainFunc);
+    body.push_back(0x45); // i32.eqz
+    body.push_back(0x0d); // br_if
+    body.push_back(0x01); // to outer block
+
+    // body
+    if (loopBody && loopBody->type == ASTNodeType::BODY) {
+        for (auto& stmt : loopBody->children) {
+            if (!stmt) continue;
+            switch (stmt->type) {
+                case ASTNodeType::ASSIGNMENT:
+                    generateAssignment(body, stmt, mainFunc);
+                    break;
+                case ASTNodeType::IF_STMT:
+                    generateIfStatement(body, stmt, mainFunc);
+                    break;
+                case ASTNodeType::WHILE_LOOP:
+                    generateWhileLoop(body, stmt, mainFunc);
+                    break;
+                case ASTNodeType::RETURN_STMT:
+                    generateReturn(body, stmt, mainFunc);
+                    break;
+                case ASTNodeType::VAR_DECL:
+                    break;
+                default:
+                    std::cout << "  ⚠️ Unhandled WHILE body stmt: "
+                              << astNodeTypeToString(stmt->type) << std::endl;
+                    break;
+            }
+        }
+    }
+
+    body.push_back(0x0c); // br
+    body.push_back(0x00); // to innermost loop
+
+    body.push_back(0x0b); // end loop
+    body.push_back(0x0b); // end block
+}
+
+void WasmCompiler::generateAssignment(std::vector<uint8_t>& body,
+                                      std::shared_ptr<ASTNode> assignment,
+                                      std::shared_ptr<ASTNode> mainFunc) {
+    if (!assignment || assignment->children.size() != 2) {
+        std::cout << "⚠️ Malformed ASSIGNMENT node\n";
+        return;
+    }
+
+    auto lhs = assignment->children[0];
+    auto rhs = assignment->children[1];
+
+    if (!lhs || lhs->type != ASTNodeType::IDENTIFIER) {
+        std::cout << "⚠️ Only simple identifier assignments supported\n";
+        return;
+    }
+
+    const std::string& varName = lhs->value;
+    auto it = localVarIndices.find(varName);
+    if (it == localVarIndices.end()) {
+        std::cout << "⚠️ Unknown local variable in assignment: " << varName << std::endl;
+        return;
+    }
+
+    generateExpression(body, rhs, mainFunc);
+    body.push_back(0x21); // local.set
+    writeLeb128(body, static_cast<uint32_t>(it->second));
+}
+
+void WasmCompiler::generateReturn(std::vector<uint8_t>& body,
+                                  std::shared_ptr<ASTNode> returnStmt,
+                                  std::shared_ptr<ASTNode> mainFunc) {
+    if (!returnStmt) return;
+
+    if (!returnStmt->children.empty()) {
+        auto expr = returnStmt->children[0];
+        if (expr) generateExpression(body, expr, mainFunc);
     } else {
-        std::cout << "❌ Expected LITERAL_INT, LITERAL_BOOL, LITERAL_REAL or IDENTIFIER, got: " << astNodeTypeToString(returnExpr->type) << std::endl;
-        return 42;
+        generateI32Const(body, 0);
+    }
+
+    body.push_back(0x0f); // return
+}
+
+// ============================================================================
+// Expressions
+// ============================================================================
+
+void WasmCompiler::generateI32Const(std::vector<uint8_t>& body, int value) {
+    body.push_back(0x41); // i32.const
+    writeLeb128(body, static_cast<uint32_t>(value));
+}
+
+void WasmCompiler::generateF64Const(std::vector<uint8_t>& body, double value) {
+    body.push_back(0x44); // f64.const
+    uint64_t bits;
+    std::memcpy(&bits, &value, sizeof(double));
+    for (int i = 0; i < 8; ++i) {
+        body.push_back(static_cast<uint8_t>(bits & 0xff));
+        bits >>= 8;
+    }
+}
+
+void WasmCompiler::generateVariableLoad(std::vector<uint8_t>& body,
+                                        const std::string& name) {
+    auto it = localVarIndices.find(name);
+    if (it == localVarIndices.end()) {
+        std::cout << "⚠️ Unknown local variable load: " << name
+                  << " (using 0 instead)" << std::endl;
+        generateI32Const(body, 0);
+        return;
+    }
+    body.push_back(0x20); // local.get
+    writeLeb128(body, static_cast<uint32_t>(it->second));
+}
+
+void WasmCompiler::generateBinaryOp(std::vector<uint8_t>& body,
+                                    std::shared_ptr<ASTNode> binaryOp,
+                                    std::shared_ptr<ASTNode> mainFunc) {
+    if (!binaryOp || binaryOp->children.size() != 2) {
+        std::cout << "⚠️ Invalid BINARY_OP node\n";
+        return;
+    }
+
+    auto left  = binaryOp->children[0];
+    auto right = binaryOp->children[1];
+
+    generateExpression(body, left, mainFunc);
+    generateExpression(body, right, mainFunc);
+
+    const std::string& op = binaryOp->value;
+
+    if (op == "+") {
+        body.push_back(0x6a); // i32.add
+    } else if (op == "-") {
+        body.push_back(0x6b); // i32.sub
+    } else if (op == "*") {
+        body.push_back(0x6c); // i32.mul
+    } else if (op == "/") {
+        body.push_back(0x6d); // i32.div_s
+    } else if (op == "and") {
+        body.push_back(0x71); // i32.and
+    } else if (op == "or") {
+        body.push_back(0x72); // i32.or
+    } else if (op == "xor") {
+        body.push_back(0x73); // i32.xor
+    } else if (op == "<") {
+        body.push_back(0x48); // i32.lt_s
+    } else if (op == "<=") {
+        body.push_back(0x4c); // i32.le_s
+    } else if (op == ">") {
+        body.push_back(0x4a); // i32.gt_s
+    } else if (op == ">=") {
+        body.push_back(0x4e); // i32.ge_s
+    } else if (op == "=") {
+        body.push_back(0x46); // i32.eq
+    } else if (op == "/=") {
+        body.push_back(0x47); // i32.ne
+    } else {
+        std::cout << "⚠️ Unhandled binary operator: '" << op << "'\n";
+    }
+}
+
+void WasmCompiler::generateExpression(std::vector<uint8_t>& body,
+                                      std::shared_ptr<ASTNode> expr,
+                                      std::shared_ptr<ASTNode> mainFunc) {
+    if (!expr) return;
+
+    switch (expr->type) {
+        case ASTNodeType::LITERAL_INT: {
+            try {
+                int v = std::stoi(expr->value);
+                generateI32Const(body, v);
+            } catch (...) {
+                generateI32Const(body, 0);
+            }
+            break;
+        }
+        case ASTNodeType::LITERAL_BOOL: {
+            if (expr->value == "true") generateI32Const(body, 1);
+            else                        generateI32Const(body, 0);
+            break;
+        }
+        case ASTNodeType::LITERAL_REAL: {
+            try {
+                double d = std::stod(expr->value);
+                generateF64Const(body, d);
+            } catch (...) {
+                generateF64Const(body, 0.0);
+            }
+            break;
+        }
+        case ASTNodeType::IDENTIFIER:
+            generateVariableLoad(body, expr->value);
+            break;
+        case ASTNodeType::BINARY_OP:
+            generateBinaryOp(body, expr, mainFunc);
+            break;
+        case ASTNodeType::UNARY_OP: {
+            const std::string& op = expr->value;
+            if (op == "not" && !expr->children.empty()) {
+                generateExpression(body, expr->children[0], mainFunc);
+                body.push_back(0x45); // i32.eqz
+            } else {
+                std::cout << "⚠️ Unhandled unary operator: " << op << std::endl;
+                generateI32Const(body, 0);
+            }
+            break;
+        }
+        default:
+            std::cout << "⚠️ Unhandled expression node type: "
+                      << astNodeTypeToString(expr->type) << std::endl;
+            generateI32Const(body, 0);
+            break;
     }
 }

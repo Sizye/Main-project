@@ -1,0 +1,7 @@
+routine main(): integer is
+  if 10 < 5 then
+    return 10;
+  else
+    return 20;
+  end
+end
