@@ -10,7 +10,7 @@ routine main(): integer is
   var asg: array[50] Personw;
   asd.id := 32;
   asg[4].id := 35;
-  asg[4].name[32] := 128;
+  asg[4].name[32] := 11234;
   asd.name[2] := 352;
   return asg[4].name[32]; 
 end

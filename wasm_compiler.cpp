@@ -165,7 +165,7 @@ uint8_t WasmCompiler::mapPrimitiveToWasm(const std::string& tname) {
 // Encoders
 // ======================================================================
 
-void WasmCompiler::writeLeb128(std::vector<uint8_t>& buf, uint32_t v) {
+void WasmCompiler::writeUnsignedLeb128(std::vector<uint8_t>& buf, uint32_t v) {
     do {
         uint8_t b = v & 0x7f;
         v >>= 7;
@@ -173,9 +173,23 @@ void WasmCompiler::writeLeb128(std::vector<uint8_t>& buf, uint32_t v) {
         buf.push_back(b);
     } while (v);
 }
-
+void WasmCompiler::writeSignedLeb128(std::vector<uint8_t>& buf, int32_t v) {
+    bool more = true;
+    while (more) {
+        uint8_t b = v & 0x7f;
+        v >>= 7;
+        
+        // Sign bit of byte is second high order bit (0x40)
+        if ((v == 0 && (b & 0x40) == 0) || (v == -1 && (b & 0x40) != 0)) {
+            more = false;
+        } else {
+            b |= 0x80;
+        }
+        buf.push_back(b);
+    }
+}
 void WasmCompiler::writeString(std::vector<uint8_t>& buf, const std::string& s) {
-    writeLeb128(buf, static_cast<uint32_t>(s.size()));
+    writeUnsignedLeb128(buf, static_cast<uint32_t>(s.size()));
     buf.insert(buf.end(), s.begin(), s.end());
 }
 
@@ -186,32 +200,32 @@ void WasmCompiler::writeString(std::vector<uint8_t>& buf, const std::string& s) 
 std::vector<uint8_t> WasmCompiler::buildTypeSection() {
     std::vector<uint8_t> payload;
 
-    writeLeb128(payload, static_cast<uint32_t>(funcs.size()));
+    writeUnsignedLeb128(payload, static_cast<uint32_t>(funcs.size()));
     for (auto& F : funcs) {
         payload.push_back(0x60);
-        writeLeb128(payload, static_cast<uint32_t>(F.paramTypes.size()));
+        writeUnsignedLeb128(payload, static_cast<uint32_t>(F.paramTypes.size()));
         for (auto t : F.paramTypes) payload.push_back(t);
-        writeLeb128(payload, static_cast<uint32_t>(F.resultTypes.size()));
+        writeUnsignedLeb128(payload, static_cast<uint32_t>(F.resultTypes.size()));
         for (auto t : F.resultTypes) payload.push_back(t);
     }
 
     std::vector<uint8_t> sec;
     sec.push_back(0x01);
-    writeLeb128(sec, static_cast<uint32_t>(payload.size()));
+    writeUnsignedLeb128(sec, static_cast<uint32_t>(payload.size()));
     sec.insert(sec.end(), payload.begin(), payload.end());
     return sec;
 }
 
 std::vector<uint8_t> WasmCompiler::buildFunctionSection() {
     std::vector<uint8_t> payload;
-    writeLeb128(payload, static_cast<uint32_t>(funcs.size()));
+    writeUnsignedLeb128(payload, static_cast<uint32_t>(funcs.size()));
     for (auto& F : funcs) {
-        writeLeb128(payload, F.typeIndex);
+        writeUnsignedLeb128(payload, F.typeIndex);
     }
 
     std::vector<uint8_t> sec;
     sec.push_back(0x03);
-    writeLeb128(sec, static_cast<uint32_t>(payload.size()));
+    writeUnsignedLeb128(sec, static_cast<uint32_t>(payload.size()));
     sec.insert(sec.end(), payload.begin(), payload.end());
     return sec;
 }
@@ -219,14 +233,14 @@ std::vector<uint8_t> WasmCompiler::buildFunctionSection() {
 std::vector<uint8_t> WasmCompiler::buildExportSection() {
     std::vector<uint8_t> payload;
 
-    writeLeb128(payload, 1);
+    writeUnsignedLeb128(payload, 1);
     writeString(payload, "main");
     payload.push_back(0x00);
-    writeLeb128(payload, funcIndexByName["main"]);
+    writeUnsignedLeb128(payload, funcIndexByName["main"]);
 
     std::vector<uint8_t> sec;
     sec.push_back(0x07);
-    writeLeb128(sec, static_cast<uint32_t>(payload.size()));
+    writeUnsignedLeb128(sec, static_cast<uint32_t>(payload.size()));
     sec.insert(sec.end(), payload.begin(), payload.end());
     return sec;
 }
@@ -234,7 +248,7 @@ std::vector<uint8_t> WasmCompiler::buildExportSection() {
 std::vector<uint8_t> WasmCompiler::buildCodeSection() {
     std::vector<uint8_t> payload;
 
-    writeLeb128(payload, static_cast<uint32_t>(funcs.size()));
+    writeUnsignedLeb128(payload, static_cast<uint32_t>(funcs.size()));
 
     for (auto& F : funcs) {
         std::vector<uint8_t> body;
@@ -258,7 +272,7 @@ std::vector<uint8_t> WasmCompiler::buildCodeSection() {
         body.push_back(0x0b);
 
         std::vector<uint8_t> entry;
-        writeLeb128(entry, static_cast<uint32_t>(body.size()));
+        writeUnsignedLeb128(entry, static_cast<uint32_t>(body.size()));
         entry.insert(entry.end(), body.begin(), body.end());
 
         payload.insert(payload.end(), entry.begin(), entry.end());
@@ -266,7 +280,7 @@ std::vector<uint8_t> WasmCompiler::buildCodeSection() {
 
     std::vector<uint8_t> sec;
     sec.push_back(0x0a);
-    writeLeb128(sec, static_cast<uint32_t>(payload.size()));
+    writeUnsignedLeb128(sec, static_cast<uint32_t>(payload.size()));
     sec.insert(sec.end(), payload.begin(), payload.end());
     return sec;
 }
@@ -305,7 +319,7 @@ std::vector<uint8_t> WasmCompiler::analyzeLocalVariables(const FuncInfo& F) {
         if (ch && ch->type == ASTNodeType::BODY) { bodyNode = ch; break; }
     }
     if (!bodyNode) {
-        writeLeb128(buf, 0);
+        writeUnsignedLeb128(buf, 0);
         return buf;
     }
 
@@ -381,9 +395,9 @@ std::vector<uint8_t> WasmCompiler::analyzeLocalVariables(const FuncInfo& F) {
         }
     }
 
-    writeLeb128(buf, static_cast<uint32_t>(locals.size()));
+    writeUnsignedLeb128(buf, static_cast<uint32_t>(locals.size()));
     for (auto& p : locals) {
-        writeLeb128(buf, p.first);
+        writeUnsignedLeb128(buf, p.first);
         buf.push_back(p.second);
     }
     return buf;
@@ -405,7 +419,7 @@ void WasmCompiler::generateLocalInitializers(std::vector<uint8_t>& body, const F
         if (s->children.size() >= 2 && s->children[1]) {
             generateExpression(body, s->children[1], F);
             body.push_back(0x21);
-            writeLeb128(body, static_cast<uint32_t>(it->second));
+            writeUnsignedLeb128(body, static_cast<uint32_t>(it->second));
         }
     }
 }
@@ -549,7 +563,7 @@ void WasmCompiler::generateArrayAssignment(std::vector<uint8_t>& body,
     } else {
         // i32 store
         body.push_back(0x36); // i32.store
-        body.push_back(0x00); // align
+        body.push_back(0x02); // align
         body.push_back(0x00); // offset
     }
 }
@@ -702,7 +716,7 @@ void WasmCompiler::generateForLoop(std::vector<uint8_t>& body,
         generateExpression(body, startExpr, F);
     }
     body.push_back(0x21);
-    writeLeb128(body, ivIdx);
+    writeUnsignedLeb128(body, ivIdx);
 
     // block/loop
     body.push_back(0x02);
@@ -712,7 +726,7 @@ void WasmCompiler::generateForLoop(std::vector<uint8_t>& body,
 
     // Cond: forward break if i > end, reverse break if i < end
     body.push_back(0x20);
-    writeLeb128(body, ivIdx);
+    writeUnsignedLeb128(body, ivIdx);
     generateExpression(body, endExpr, F);
     body.push_back(isReverse ? 0x48 : 0x4a);
     body.push_back(0x0d);
@@ -736,12 +750,12 @@ void WasmCompiler::generateForLoop(std::vector<uint8_t>& body,
 
     // Step i := i ± 1
     body.push_back(0x20);
-    writeLeb128(body, ivIdx);
+    writeUnsignedLeb128(body, ivIdx);
     body.push_back(0x41);
-    writeLeb128(body, 1);
+    writeUnsignedLeb128(body, 1);
     body.push_back(isReverse ? 0x6b : 0x6a);
     body.push_back(0x21);
-    writeLeb128(body, ivIdx);
+    writeUnsignedLeb128(body, ivIdx);
 
     // backedge and close
     body.push_back(0x0c);
@@ -877,7 +891,7 @@ void WasmCompiler::generateCall(std::vector<uint8_t>& body,
         return;
     }
     body.push_back(0x10);
-    writeLeb128(body, it->second);
+    writeUnsignedLeb128(body, it->second);
 }
 
 // ======================================================================
@@ -886,7 +900,7 @@ void WasmCompiler::generateCall(std::vector<uint8_t>& body,
 
 void WasmCompiler::emitI32Const(std::vector<uint8_t>& body, int v) {
     body.push_back(0x41);
-    writeLeb128(body, static_cast<uint32_t>(v));
+    writeSignedLeb128(body, static_cast<uint32_t>(v));
 }
 
 void WasmCompiler::emitF64Const(std::vector<uint8_t>& body, double d) {
@@ -907,7 +921,7 @@ void WasmCompiler::emitLocalGet(std::vector<uint8_t>& body, const std::string& n
         return;
     }
     body.push_back(0x20);
-    writeLeb128(body, static_cast<uint32_t>(it->second));
+    writeUnsignedLeb128(body, static_cast<uint32_t>(it->second));
 }
 
 void WasmCompiler::emitLocalSet(std::vector<uint8_t>& body, const std::string& name) {
@@ -917,7 +931,7 @@ void WasmCompiler::emitLocalSet(std::vector<uint8_t>& body, const std::string& n
         return;
     }
     body.push_back(0x21);
-    writeLeb128(body, static_cast<uint32_t>(it->second));
+    writeUnsignedLeb128(body, static_cast<uint32_t>(it->second));
 }
 
 
@@ -1268,25 +1282,25 @@ void WasmCompiler::generateMemberAccess(std::vector<uint8_t>& body,
 void WasmCompiler::emitI32Load(std::vector<uint8_t>& body, uint32_t offset) {
     body.push_back(0x28); // i32.load
     body.push_back(0x02); // align (2^2 = 4-byte alignment)
-    writeLeb128(body, offset);
+    writeUnsignedLeb128(body, offset);
 }
 
 void WasmCompiler::emitI32Store(std::vector<uint8_t>& body, uint32_t offset) {
     body.push_back(0x36); // i32.store
     body.push_back(0x02); // align (2^2 = 4-byte alignment)
-    writeLeb128(body, offset);
+    writeUnsignedLeb128(body, offset);
 }
 
 void WasmCompiler::emitF64Load(std::vector<uint8_t>& body, uint32_t offset) {
     body.push_back(0x2c); // f64.load
     body.push_back(0x03); // align (2^3 = 8-byte alignment)
-    writeLeb128(body, offset);
+    writeUnsignedLeb128(body, offset);
 }
 
 void WasmCompiler::emitF64Store(std::vector<uint8_t>& body, uint32_t offset) {
     body.push_back(0x39); // f64.store
     body.push_back(0x03); // align (2^3 = 8-byte alignment)
-    writeLeb128(body, offset);
+    writeUnsignedLeb128(body, offset);
 }
 
 std::vector<uint8_t> WasmCompiler::buildMemorySection() {
@@ -1302,13 +1316,13 @@ std::vector<uint8_t> WasmCompiler::buildMemorySection() {
     std::cout << "📊 Total memory needed: " << totalMemoryNeeded 
               << " bytes (" << totalMemoryPages << " pages)" << std::endl;
     
-    writeLeb128(payload, 1);
+    writeUnsignedLeb128(payload, 1);
     payload.push_back(0x00);
-    writeLeb128(payload, static_cast<uint32_t>(totalMemoryPages));
+    writeUnsignedLeb128(payload, static_cast<uint32_t>(totalMemoryPages));
     
     std::vector<uint8_t> sec;
     sec.push_back(0x05);
-    writeLeb128(sec, static_cast<uint32_t>(payload.size()));
+    writeUnsignedLeb128(sec, static_cast<uint32_t>(payload.size()));
     sec.insert(sec.end(), payload.begin(), payload.end());
     return sec;
 }

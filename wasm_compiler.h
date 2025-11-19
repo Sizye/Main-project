@@ -79,8 +79,9 @@ private:
     uint8_t mapPrimitiveToWasm(const std::string& tname);
 
     // Wasm writers
-    void writeLeb128(std::vector<uint8_t>& buf, uint32_t value);
+    void writeUnsignedLeb128(std::vector<uint8_t>& buf, uint32_t value);
     void writeString(std::vector<uint8_t>& buf, const std::string& s);
+    void writeSignedLeb128(std::vector<uint8_t>& buf, int32_t v);
 
     // Sections for all functions
     std::vector<uint8_t> buildTypeSection();
