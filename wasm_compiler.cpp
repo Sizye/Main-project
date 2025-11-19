@@ -337,7 +337,7 @@ std::vector<uint8_t> WasmCompiler::analyzeLocalVariables(const FuncInfo& F) {
                     }
                 }
             if (typeNode->type == ASTNodeType::ARRAY_TYPE) {
-                auto [elemType, size] = analyzeArrayType(typeNode);
+                auto [elemType, elemTypeName, size] = analyzeArrayType(typeNode);
                 
                 // For arrays, we store the base address as a local variable
                 localVarIndices[name] = nextLocalIndex++;
@@ -345,13 +345,21 @@ std::vector<uint8_t> WasmCompiler::analyzeLocalVariables(const FuncInfo& F) {
                 // Register array info for later access
                 ArrayInfo arrInfo;
                 arrInfo.elemType = elemType;
+                arrInfo.elemTypeName = elemTypeName;
                 arrInfo.size = size;
-                arrInfo.baseOffset = globalMemoryOffset;  // ← USE GLOBAL OFFSET
+                arrInfo.baseOffset = globalMemoryOffset;
                 arrayInfos[name] = arrInfo;
                 
-                // Allocate memory for the array (in linear memory)
-                int elemSize = (elemType == 0x7c) ? 8 : 4;
-                globalMemoryOffset += size * elemSize;  // ← USE GLOBAL OFFSET
+                // Calculate element size based on type
+                int elemSize = 4; // default for i32
+                if (elemType == 0x7c) {
+                    elemSize = 8; // f64
+                } else if (recordTypes.find(elemTypeName) != recordTypes.end()) {
+                    // It's a record type - use record size
+                    elemSize = recordTypes[elemTypeName].totalSize;
+                }
+                
+                globalMemoryOffset += size * elemSize;
                 
                 // Add the local variable to track the array base address
                 locals.push_back({1, 0x7f}); // base address is stored as i32 offset
@@ -917,12 +925,13 @@ void WasmCompiler::emitLocalSet(std::vector<uint8_t>& body, const std::string& n
 // Array and Type Analysis
 // ======================================================================
 
-std::pair<uint8_t, int> WasmCompiler::analyzeArrayType(std::shared_ptr<ASTNode> arrayTypeNode) {
+std::tuple<uint8_t, std::string, int> WasmCompiler::analyzeArrayType(std::shared_ptr<ASTNode> arrayTypeNode) {
     if (!arrayTypeNode || arrayTypeNode->type != ASTNodeType::ARRAY_TYPE) {
-        return {0x7f, 0};  // default to i32 with size 0
+        return {0x7f, "integer", 0};  // default to i32
     }
     
-    uint8_t elemType = 0x7f;  // default i32
+    uint8_t elemType = 0x7f;
+    std::string typeName = "integer";
     int size = 0;
     
     for (auto& child : arrayTypeNode->children) {
@@ -935,17 +944,19 @@ std::pair<uint8_t, int> WasmCompiler::analyzeArrayType(std::shared_ptr<ASTNode> 
                 size = 0;
             }
         } else if (child->type == ASTNodeType::PRIMITIVE_TYPE) {
-            elemType = mapPrimitiveToWasm(child->value);
+            typeName = child->value;
+            elemType = mapPrimitiveToWasm(typeName);
         } else if (child->type == ASTNodeType::USER_TYPE) {
-            elemType = mapPrimitiveToWasm(child->value);  // treat as i32 for now
+            typeName = child->value;
+            elemType = 0x7f;  // Records are stored as i32 base addresses
         }
     }
     
-    return {elemType, size};
+    return {elemType, typeName, size};
 }
 
 uint8_t WasmCompiler::getArrayType(std::shared_ptr<ASTNode> arrayTypeNode) {
-    auto [elemType, _] = analyzeArrayType(arrayTypeNode);
+    auto [elemType, elemTypeName, _] = analyzeArrayType(arrayTypeNode);
     return elemType;
 }
 
@@ -954,83 +965,53 @@ uint8_t WasmCompiler::getArrayType(std::shared_ptr<ASTNode> arrayTypeNode) {
 // Array and Member Access Generation
 // ======================================================================
 
-void WasmCompiler::generateArrayAccess(std::vector<uint8_t>& body,
-                                       std::shared_ptr<ASTNode> arrayAccess,
-                                       const FuncInfo& F) {
+void WasmCompiler::generateArrayAccessForRecord(std::vector<uint8_t>& body,
+                                                std::shared_ptr<ASTNode> arrayAccess,
+                                                const FuncInfo& F) {
     if (!arrayAccess || arrayAccess->children.size() != 2) {
-        std::cout << "⚠️ Malformed array access\n";
+        std::cout << "⚠️ Malformed array access for record\n";
         emitI32Const(body, 0);
         return;
     }
     
-    auto arrayRef = arrayAccess->children[0];  // identifier OR member access
-    auto indexExpr = arrayAccess->children[1]; // index expression
+    auto arrayRef = arrayAccess->children[0];
+    auto indexExpr = arrayAccess->children[1];
     
-    if (!arrayRef || !indexExpr) {
+    if (!arrayRef || !indexExpr || arrayRef->type != ASTNodeType::IDENTIFIER) {
         emitI32Const(body, 0);
         return;
     }
     
-    std::string arrayName;
-    ArrayInfo arrayInfo;
-    
-    if (arrayRef->type == ASTNodeType::IDENTIFIER) {
-        // Simple array variable
-        arrayName = arrayRef->value;
-        auto it = arrayInfos.find(arrayName);
-        if (it == arrayInfos.end()) {
-            std::cout << "⚠️ Unknown array: " << arrayName << "\n";
-            emitI32Const(body, 0);
-            return;
-        }
-        arrayInfo = it->second;
-        
-        // Get the base address of the array
-        emitLocalGet(body, arrayName);
-        
-    } else if (arrayRef->type == ASTNodeType::MEMBER_ACCESS) {
-        // Array field inside a record - NEW CODE!
-        auto [baseAddr, elemType, size] = resolveArrayMember(body, arrayRef, F);
-        if (baseAddr == -1) {
-            emitI32Const(body, 0);
-            return;
-        }
-        
-        // The base address is already on the stack from resolveArrayMember
-        arrayInfo.elemType = elemType;
-        arrayInfo.size = size;
-        
-    } else {
-        std::cout << "⚠️ Array access on unsupported node type: " << tname(arrayRef->type) << "\n";
+    std::string arrayName = arrayRef->value;
+    auto it = arrayInfos.find(arrayName);
+    if (it == arrayInfos.end()) {
+        std::cout << "⚠️ Unknown array: " << arrayName << "\n";
         emitI32Const(body, 0);
         return;
     }
     
-    // Calculate the index * element_size
+    // Get base address
+    emitLocalGet(body, arrayName);
+    
+    // Calculate index * element_size
     generateExpression(body, indexExpr, F);
     
-    // Multiply index by element size (4 for i32, 8 for f64)
-    int elemSize = (arrayInfo.elemType == 0x7c) ? 8 : 4;
-    if (elemSize != 1) {
-        emitI32Const(body, elemSize);
-        body.push_back(0x6c); // i32.mul
+    // Use proper element size based on the actual type
+    int elemSize = 4; // default
+    if (it->second.elemType == 0x7c) {
+        elemSize = 8; // f64
+    } else if (recordTypes.find(it->second.elemTypeName) != recordTypes.end()) {
+        // It's a record type - use record size
+        elemSize = recordTypes[it->second.elemTypeName].totalSize;
     }
+    
+    emitI32Const(body, elemSize);
+    body.push_back(0x6c); // i32.mul
     
     // Add to base address
     body.push_back(0x6a); // i32.add
     
-    // Load the value from memory
-    if (arrayInfo.elemType == 0x7c) {
-        // f64 load
-        body.push_back(0x2c); // f64.load
-        body.push_back(0x00); // align
-        body.push_back(0x00); // offset
-    } else {
-        // i32 load
-        body.push_back(0x28); // i32.load
-        body.push_back(0x00); // align
-        body.push_back(0x00); // offset
-    }
+    // Result: address of array[index] is now on stack
 }
 
 std::tuple<int, uint8_t, int> WasmCompiler::resolveArrayMember(std::vector<uint8_t>& body,
@@ -1262,7 +1243,7 @@ std::pair<uint8_t, int> WasmCompiler::analyzeFieldType(std::shared_ptr<ASTNode> 
         }
     } 
     else if (typeNode->type == ASTNodeType::ARRAY_TYPE) {
-        auto [elemType, size] = analyzeArrayType(typeNode);
+        auto [elemType,_, size] = analyzeArrayType(typeNode);
         int elemSize = (elemType == 0x7c) ? 8 : 4;
         return {elemType, size * elemSize};
     }
@@ -1286,6 +1267,7 @@ void WasmCompiler::generateMemberAssignment(std::vector<uint8_t>& body,
         generateExpression(body, rhs, F);
         return;
     }
+    
     uint8_t fieldType = 0x7f;
     auto base = memberAccess->children[0];
     std::string fieldName = memberAccess->value;
@@ -1310,7 +1292,6 @@ void WasmCompiler::generateMemberAssignment(std::vector<uint8_t>& body,
         }
         
         int fieldOffset = -1;
-        fieldType = 0x7f;
         
         for (const auto& field : recordTypeIt->second.fields) {
             if (field.first == fieldName) {
@@ -1334,38 +1315,37 @@ void WasmCompiler::generateMemberAssignment(std::vector<uint8_t>& body,
         
     } else if (base->type == ASTNodeType::ARRAY_ACCESS) {
         // Array of records: array[index].field
-        // First, get the base address of the array element
-        generateArrayAccessForRecord(body, base, F);
-        
-        // Now find the field offset within the record
-        std::string recordTypeName;
-        
-        // Try to find the record type from array info
         auto arrayRef = base->children[0];
-        if (arrayRef && arrayRef->type == ASTNodeType::IDENTIFIER) {
-            auto arrayIt = arrayInfos.find(arrayRef->value);
-            if (arrayIt != arrayInfos.end()) {
-                // For now, we'll assume all arrays of records have the same structure
-                // You might need to store record type info in ArrayInfo
-                recordTypeName = "Person"; // Hardcode for now, need to improve this
-            }
-        }
+        auto indexExpr = base->children[1];
         
-        if (recordTypeName.empty()) {
-            std::cout << "⚠️ Could not determine record type for array element\n";
+        if (!arrayRef || !indexExpr || arrayRef->type != ASTNodeType::IDENTIFIER) {
+            std::cout << "⚠️ Malformed array access in member assignment\n";
             generateExpression(body, rhs, F);
             return;
         }
         
+        std::string arrayName = arrayRef->value;
+        
+        // Find array info to get the record type
+        auto arrayIt = arrayInfos.find(arrayName);
+        if (arrayIt == arrayInfos.end()) {
+            std::cout << "⚠️ Unknown array: " << arrayName << "\n";
+            generateExpression(body, rhs, F);
+            return;
+        }
+        
+        std::string recordTypeName = arrayIt->second.elemTypeName;
+        
+        // Verify it's actually a record type
         auto recordTypeIt = recordTypes.find(recordTypeName);
         if (recordTypeIt == recordTypes.end()) {
-            std::cout << "⚠️ Unknown record type: " << recordTypeName << "\n";
+            std::cout << "⚠️ Array element type '" << recordTypeName << "' is not a record type\n";
             generateExpression(body, rhs, F);
             return;
         }
         
+        // Find field offset within the record
         int fieldOffset = -1;
-        fieldType = 0x7f;
         
         for (const auto& field : recordTypeIt->second.fields) {
             if (field.first == fieldName) {
@@ -1382,7 +1362,22 @@ void WasmCompiler::generateMemberAssignment(std::vector<uint8_t>& body,
             return;
         }
         
-        // Add field offset to the array element address (already on stack)
+        // Calculate address: array[index] + field_offset
+        // First get array base address
+        emitLocalGet(body, arrayName);
+        
+        // Calculate index * record_size
+        generateExpression(body, indexExpr, F);
+        
+        // Multiply by record size
+        int recordSize = recordTypeIt->second.totalSize;
+        emitI32Const(body, recordSize);
+        body.push_back(0x6c); // i32.mul
+        
+        // Add to base address to get array[index] address
+        body.push_back(0x6a); // i32.add
+        
+        // Now add field offset
         emitI32Const(body, fieldOffset);
         body.push_back(0x6a); // i32.add
         
@@ -1405,45 +1400,81 @@ void WasmCompiler::generateMemberAssignment(std::vector<uint8_t>& body,
     }
     body.push_back(0x00); // offset 0 (already included in calculation)
 }
-
-void WasmCompiler::generateArrayAccessForRecord(std::vector<uint8_t>& body,
-                                                std::shared_ptr<ASTNode> arrayAccess,
-                                                const FuncInfo& F) {
+void WasmCompiler::generateArrayAccess(std::vector<uint8_t>& body,
+                                       std::shared_ptr<ASTNode> arrayAccess,
+                                       const FuncInfo& F) {
     if (!arrayAccess || arrayAccess->children.size() != 2) {
-        std::cout << "⚠️ Malformed array access for record\n";
+        std::cout << "⚠️ Malformed array access\n";
         emitI32Const(body, 0);
         return;
     }
     
-    auto arrayRef = arrayAccess->children[0];
-    auto indexExpr = arrayAccess->children[1];
+    auto arrayRef = arrayAccess->children[0];  // identifier OR member access
+    auto indexExpr = arrayAccess->children[1]; // index expression
     
-    if (!arrayRef || !indexExpr || arrayRef->type != ASTNodeType::IDENTIFIER) {
+    if (!arrayRef || !indexExpr) {
         emitI32Const(body, 0);
         return;
     }
     
-    std::string arrayName = arrayRef->value;
-    auto it = arrayInfos.find(arrayName);
-    if (it == arrayInfos.end()) {
-        std::cout << "⚠️ Unknown array: " << arrayName << "\n";
+    std::string arrayName;
+    ArrayInfo arrayInfo;
+    
+    if (arrayRef->type == ASTNodeType::IDENTIFIER) {
+        // Simple array variable
+        arrayName = arrayRef->value;
+        auto it = arrayInfos.find(arrayName);
+        if (it == arrayInfos.end()) {
+            std::cout << "⚠️ Unknown array: " << arrayName << "\n";
+            emitI32Const(body, 0);
+            return;
+        }
+        arrayInfo = it->second;
+        
+        // Get the base address of the array
+        emitLocalGet(body, arrayName);
+        
+    } else if (arrayRef->type == ASTNodeType::MEMBER_ACCESS) {
+        // Array field inside a record - NEW CODE!
+        auto [baseAddr, elemType, size] = resolveArrayMember(body, arrayRef, F);
+        if (baseAddr == -1) {
+            emitI32Const(body, 0);
+            return;
+        }
+        
+        // The base address is already on the stack from resolveArrayMember
+        arrayInfo.elemType = elemType;
+        arrayInfo.size = size;
+        
+    } else {
+        std::cout << "⚠️ Array access on unsupported node type: " << tname(arrayRef->type) << "\n";
         emitI32Const(body, 0);
         return;
     }
     
-    // Get base address
-    emitLocalGet(body, arrayName);
-    
-    // Calculate index * record_size
+    // Calculate the index * element_size
     generateExpression(body, indexExpr, F);
     
-    // Multiply by record size (each Person record is 220 bytes based on your logs)
-    int recordSize = 220; // This should come from your record type info
-    emitI32Const(body, recordSize);
-    body.push_back(0x6c); // i32.mul
+    // Multiply index by element size (4 for i32, 8 for f64)
+    int elemSize = (arrayInfo.elemType == 0x7c) ? 8 : 4;
+    if (elemSize != 1) {
+        emitI32Const(body, elemSize);
+        body.push_back(0x6c); // i32.mul
+    }
     
     // Add to base address
     body.push_back(0x6a); // i32.add
     
-    // Result: address of array[index] is now on stack
+    // Load the value from memory
+    if (arrayInfo.elemType == 0x7c) {
+        // f64 load
+        body.push_back(0x2c); // f64.load
+        body.push_back(0x00); // align
+        body.push_back(0x00); // offset
+    } else {
+        // i32 load
+        body.push_back(0x28); // i32.load
+        body.push_back(0x00); // align
+        body.push_back(0x00); // offset
+    }
 }

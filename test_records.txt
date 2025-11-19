@@ -1,4 +1,4 @@
-type Person is record
+type Personw is record
     var id : integer;
     var name : array[50] integer;
     var height : real;
@@ -6,7 +6,7 @@ type Person is record
 end;
 
 routine main(): integer is
-  var asd: Person;
+  var asd: Personw;
   asd.id := 32;
   asd.name[2] := 352;
   return asd.name[2]; 

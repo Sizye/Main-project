@@ -31,9 +31,10 @@ private:
 
     // Array variable tracking (add to private members)
     struct ArrayInfo {
-        uint8_t elemType;
+        uint8_t elemType;           // WASM type (0x7f for i32, 0x7c for f64)
+        std::string elemTypeName;   // Original type name ("integer", "real", "Person")
         int size;
-        int baseOffset;  // offset in linear memory
+        int baseOffset;
     };
     std::unordered_map<std::string, ArrayInfo> arrayInfos;
     // Memory management for arrays
@@ -135,7 +136,7 @@ private:
 
     // For array type handling
     uint8_t getArrayType(std::shared_ptr<ASTNode> arrayTypeNode);
-    std::pair<uint8_t, int> analyzeArrayType(std::shared_ptr<ASTNode> arrayTypeNode);
+    std::tuple<uint8_t, std::string, int> analyzeArrayType(std::shared_ptr<ASTNode> arrayTypeNode);
     
     // Array and member access generation
     void generateArrayAccess(std::vector<uint8_t>& body,
