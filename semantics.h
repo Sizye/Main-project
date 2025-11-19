@@ -1218,6 +1218,7 @@ private:
                         // WRITE-ONLY LOCAL VARIABLE - REMOVE DECLARATION
                         std::cout << "🔥 OPTIMIZATION: Removing write-only LOCAL variable '" << varName << "'" << std::endl;
                         removedCount++;
+                        removeAssignmentsToVariable(varName, node);
                         // DON'T add to newChildren - this removes the declaration
                     } else {
                         // COMPLETELY UNUSED VARIABLE
@@ -1250,6 +1251,7 @@ private:
                     } else {
                         // Remove the entire assignment (no side effects)
                         std::cout << "🔥 OPTIMIZATION: Removing assignment to write-only variable '" << target << "'" << std::endl;
+                        removeAssignmentsToVariable(target, node);
                         removedCount++;
                     }
                 }
@@ -1278,6 +1280,8 @@ private:
                             std::cout << "🔥 OPTIMIZATION: Removing dead assignment to '"
                                     << target << "'" << std::endl;
                             removedCount++;
+                            removeAssignmentsToVariable(target, node);
+                            
                         }
                     }
                 }
@@ -1341,7 +1345,8 @@ private:
                 std::cout << "  📊 RETURN_STMT with " << node->children.size() << " children" << std::endl;
                 if (!node->children.empty()) {
                     std::cout << "  📖 Processing return expression" << std::endl;
-                    collectCompleteUsage(node->children[0]); // Process the return expression
+                    trackReadsInExpression(node->children[0]);
+                    collectCompleteUsage(node->children[0]); // For routine calls
                 }
                 return;
             case ASTNodeType::PRINT_STMT:

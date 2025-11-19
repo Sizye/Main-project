@@ -29,8 +29,18 @@ private:
     std::unordered_map<std::string,int> localVarIndices;
     int nextLocalIndex;
 
+    // Array variable tracking (add to private members)
+    struct ArrayInfo {
+        uint8_t elemType;
+        int size;
+        int baseOffset;  // offset in linear memory
+    };
+    std::unordered_map<std::string, ArrayInfo> arrayInfos;
+    // Memory management for arrays
+    int nextMemoryOffset;
+
 public:
-    WasmCompiler() : nextLocalIndex(0) {}
+    WasmCompiler() : nextLocalIndex(0), nextMemoryOffset(0) {}
 
     // Compile full AST into a single-module WASM file exporting `main`
     bool compile(std::shared_ptr<ASTNode> program, const std::string& filename);
@@ -93,6 +103,26 @@ private:
     void emitF64Const(std::vector<uint8_t>& body, double d);
     void emitLocalGet(std::vector<uint8_t>& body, const std::string& name);
     void emitLocalSet(std::vector<uint8_t>& body, const std::string& name);
+    void emitI32Load(std::vector<uint8_t>& body, uint32_t offset);
+    void emitI32Store(std::vector<uint8_t>& body, uint32_t offset);
+    void emitF64Load(std::vector<uint8_t>& body, uint32_t offset);
+    void emitF64Store(std::vector<uint8_t>& body, uint32_t offset);
+
+    // For array type handling
+    uint8_t getArrayType(std::shared_ptr<ASTNode> arrayTypeNode);
+    std::pair<uint8_t, int> analyzeArrayType(std::shared_ptr<ASTNode> arrayTypeNode);
+    
+    // Array and member access generation
+    void generateArrayAccess(std::vector<uint8_t>& body,
+                             std::shared_ptr<ASTNode> arrayAccess,
+                             const FuncInfo& F);
+    void generateMemberAccess(std::vector<uint8_t>& body,
+                              std::shared_ptr<ASTNode> memberAccess,
+                              const FuncInfo& F);
+    void generateArrayAssignment(std::vector<uint8_t>& body,
+                                 std::shared_ptr<ASTNode> arrayAccess,
+                                 std::shared_ptr<ASTNode> rhs,
+                                 const FuncInfo& F);
 };
 
 #endif // WASM_COMPILER_H

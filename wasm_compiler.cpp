@@ -235,7 +235,7 @@ std::vector<uint8_t> WasmCompiler::buildCodeSection() {
     for (auto& F : funcs) {
         std::vector<uint8_t> body;
 
-        resetLocals();
+        resetLocals();  // This now also clears array info
         addParametersToLocals(F);
 
         auto localsHeader = analyzeLocalVariables(F);
@@ -273,7 +273,9 @@ std::vector<uint8_t> WasmCompiler::buildCodeSection() {
 
 void WasmCompiler::resetLocals() {
     localVarIndices.clear();
+    arrayInfos.clear();  // Clear array info for each function
     nextLocalIndex = 0;
+    nextMemoryOffset = 0;  // Reset memory offset for each function
 }
 
 void WasmCompiler::addParametersToLocals(const FuncInfo& F) {
@@ -307,13 +309,45 @@ std::vector<uint8_t> WasmCompiler::analyzeLocalVariables(const FuncInfo& F) {
         if (!s || s->type != ASTNodeType::VAR_DECL) continue;
         const std::string& name = s->value;
         if (localVarIndices.count(name)) continue;
-        localVarIndices[name] = nextLocalIndex++;
-        uint8_t wt = 0x7f;
-        if (!s->children.empty() && s->children[0] &&
-            s->children[0]->type == ASTNodeType::PRIMITIVE_TYPE) {
-            wt = mapPrimitiveToWasm(s->children[0]->value);
+        
+        // Check if it's an array declaration
+        if (s->children.size() >= 1 && s->children[0]) {
+            auto typeNode = s->children[0];
+            
+            if (typeNode->type == ASTNodeType::ARRAY_TYPE) {
+                auto [elemType, size] = analyzeArrayType(typeNode);
+                
+                // For arrays, we store the base address as a local variable
+                localVarIndices[name] = nextLocalIndex++;
+                
+                // Register array info for later access
+                ArrayInfo arrInfo;
+                arrInfo.elemType = elemType;
+                arrInfo.size = size;
+                arrInfo.baseOffset = nextMemoryOffset;
+                arrayInfos[name] = arrInfo;
+                
+                // Allocate memory for the array (in linear memory)
+                nextMemoryOffset += size * (elemType == 0x7c ? 8 : 4); // f64 = 8 bytes, i32 = 4 bytes
+                
+                // Add the local variable to track the array base address
+                locals.push_back({1, 0x7f}); // base address is stored as i32 offset
+            } else {
+                // Regular variable
+                localVarIndices[name] = nextLocalIndex++;
+                uint8_t wt = 0x7f;
+                if (typeNode->type == ASTNodeType::PRIMITIVE_TYPE) {
+                    wt = mapPrimitiveToWasm(typeNode->value);
+                } else if (typeNode->type == ASTNodeType::USER_TYPE) {
+                    wt = 0x7f; // default to i32
+                }
+                locals.push_back({1, wt});
+            }
+        } else {
+            // No explicit type, default to i32
+            localVarIndices[name] = nextLocalIndex++;
+            locals.push_back({1, 0x7f});
         }
-        locals.push_back({1, wt});
     }
 
     writeLeb128(buf, static_cast<uint32_t>(locals.size()));
@@ -391,12 +425,81 @@ void WasmCompiler::generateAssignment(std::vector<uint8_t>& body,
     if (!a || a->children.size() != 2) return;
     auto lhs = a->children[0];
     auto rhs = a->children[1];
-    if (!lhs || lhs->type != ASTNodeType::IDENTIFIER) {
-        std::cout << "⚠️ Only simple identifier assignments supported\n";
+    if (!lhs || !rhs) return;
+    
+    if (lhs->type == ASTNodeType::IDENTIFIER) {
+        // Simple variable assignment
+        generateExpression(body, rhs, F);
+        emitLocalSet(body, lhs->value);
+    } else if (lhs->type == ASTNodeType::ARRAY_ACCESS) {
+        // Array element assignment
+        generateArrayAssignment(body, lhs, rhs, F);
+    } else {
+        std::cout << "⚠️ Only simple identifier and array assignments supported\n";
+        generateExpression(body, rhs, F);
+    }
+}
+
+void WasmCompiler::generateArrayAssignment(std::vector<uint8_t>& body,
+                                           std::shared_ptr<ASTNode> arrayAccess,
+                                           std::shared_ptr<ASTNode> rhs,
+                                           const FuncInfo& F) {
+    if (!arrayAccess || arrayAccess->children.size() != 2) {
+        std::cout << "⚠️ Malformed array assignment\n";
+        generateExpression(body, rhs, F);
         return;
     }
+    
+    auto arrayRef = arrayAccess->children[0];  // identifier
+    auto indexExpr = arrayAccess->children[1]; // index expression
+    
+    if (!arrayRef || !indexExpr) return;
+    
+    if (arrayRef->type != ASTNodeType::IDENTIFIER) {
+        std::cout << "⚠️ Array assignment on non-identifier\n";
+        generateExpression(body, rhs, F);
+        return;
+    }
+    
+    const std::string& arrayName = arrayRef->value;
+    auto it = arrayInfos.find(arrayName);
+    if (it == arrayInfos.end()) {
+        std::cout << "⚠️ Unknown array: " << arrayName << "\n";
+        generateExpression(body, rhs, F);
+        return;
+    }
+    
+    // Get the base address of the array
+    emitLocalGet(body, arrayName);
+    
+    // Calculate the index * element_size
+    generateExpression(body, indexExpr, F);
+    
+    // Multiply index by element size (4 for i32, 8 for f64)
+    int elemSize = (it->second.elemType == 0x7c) ? 8 : 4;
+    if (elemSize != 1) {
+        emitI32Const(body, elemSize);
+        body.push_back(0x6c); // i32.mul
+    }
+    
+    // Add to base address
+    body.push_back(0x6a); // i32.add
+    
+    // Generate the value to store
     generateExpression(body, rhs, F);
-    emitLocalSet(body, lhs->value);
+    
+    // Store the value to memory
+    if (it->second.elemType == 0x7c) {
+        // f64 store
+        body.push_back(0x39); // f64.store
+        body.push_back(0x00); // align
+        body.push_back(0x00); // offset
+    } else {
+        // i32 store
+        body.push_back(0x36); // i32.store
+        body.push_back(0x00); // align
+        body.push_back(0x00); // offset
+    }
 }
 
 void WasmCompiler::generateIfStatement(std::vector<uint8_t>& body,
@@ -635,6 +738,12 @@ void WasmCompiler::generateExpression(std::vector<uint8_t>& body,
         case ASTNodeType::IDENTIFIER:
             emitLocalGet(body, e->value);
             break;
+        case ASTNodeType::ARRAY_ACCESS:
+            generateArrayAccess(body, e, F);
+            break;
+        case ASTNodeType::MEMBER_ACCESS:
+            generateMemberAccess(body, e, F);
+            break;
         case ASTNodeType::BINARY_OP:
             generateBinaryOp(body, e, F);
             break;
@@ -752,4 +861,154 @@ void WasmCompiler::emitLocalSet(std::vector<uint8_t>& body, const std::string& n
     }
     body.push_back(0x21);
     writeLeb128(body, static_cast<uint32_t>(it->second));
+}
+
+
+// ======================================================================
+// Array and Type Analysis
+// ======================================================================
+
+std::pair<uint8_t, int> WasmCompiler::analyzeArrayType(std::shared_ptr<ASTNode> arrayTypeNode) {
+    if (!arrayTypeNode || arrayTypeNode->type != ASTNodeType::ARRAY_TYPE) {
+        return {0x7f, 0};  // default to i32 with size 0
+    }
+    
+    uint8_t elemType = 0x7f;  // default i32
+    int size = 0;
+    
+    for (auto& child : arrayTypeNode->children) {
+        if (!child) continue;
+        
+        if (child->type == ASTNodeType::LITERAL_INT) {
+            try {
+                size = std::stoi(child->value);
+            } catch (...) {
+                size = 0;
+            }
+        } else if (child->type == ASTNodeType::PRIMITIVE_TYPE) {
+            elemType = mapPrimitiveToWasm(child->value);
+        } else if (child->type == ASTNodeType::USER_TYPE) {
+            elemType = mapPrimitiveToWasm(child->value);  // treat as i32 for now
+        }
+    }
+    
+    return {elemType, size};
+}
+
+uint8_t WasmCompiler::getArrayType(std::shared_ptr<ASTNode> arrayTypeNode) {
+    auto [elemType, _] = analyzeArrayType(arrayTypeNode);
+    return elemType;
+}
+
+
+// ======================================================================
+// Array and Member Access Generation
+// ======================================================================
+
+void WasmCompiler::generateArrayAccess(std::vector<uint8_t>& body,
+                                       std::shared_ptr<ASTNode> arrayAccess,
+                                       const FuncInfo& F) {
+    if (!arrayAccess || arrayAccess->children.size() != 2) {
+        std::cout << "⚠️ Malformed array access\n";
+        emitI32Const(body, 0);
+        return;
+    }
+    
+    auto arrayRef = arrayAccess->children[0];  // identifier
+    auto indexExpr = arrayAccess->children[1]; // index expression
+    
+    if (!arrayRef || !indexExpr) {
+        emitI32Const(body, 0);
+        return;
+    }
+    
+    if (arrayRef->type != ASTNodeType::IDENTIFIER) {
+        std::cout << "⚠️ Array access on non-identifier\n";
+        emitI32Const(body, 0);
+        return;
+    }
+    
+    const std::string& arrayName = arrayRef->value;
+    auto it = arrayInfos.find(arrayName);
+    if (it == arrayInfos.end()) {
+        std::cout << "⚠️ Unknown array: " << arrayName << "\n";
+        emitI32Const(body, 0);
+        return;
+    }
+    
+    // Get the base address of the array
+    emitLocalGet(body, arrayName);
+    
+    // Calculate the index * element_size
+    generateExpression(body, indexExpr, F);
+    
+    // Multiply index by element size (4 for i32, 8 for f64)
+    int elemSize = (it->second.elemType == 0x7c) ? 8 : 4;
+    if (elemSize != 1) {
+        emitI32Const(body, elemSize);
+        body.push_back(0x6c); // i32.mul
+    }
+    
+    // Add to base address
+    body.push_back(0x6a); // i32.add
+    
+    // Load the value from memory
+    if (it->second.elemType == 0x7c) {
+        // f64 load
+        body.push_back(0x2c); // f64.load
+        body.push_back(0x00); // align
+        body.push_back(0x00); // offset
+    } else {
+        // i32 load
+        body.push_back(0x28); // i32.load
+        body.push_back(0x00); // align
+        body.push_back(0x00); // offset
+    }
+}
+
+void WasmCompiler::generateMemberAccess(std::vector<uint8_t>& body,
+                                        std::shared_ptr<ASTNode> memberAccess,
+                                        const FuncInfo& F) {
+    // For now, we'll handle simple member access as array access
+    // This can be extended later for record types
+    if (!memberAccess || memberAccess->children.size() < 2) {
+        std::cout << "⚠️ Malformed member access\n";
+        emitI32Const(body, 0);
+        return;
+    }
+    
+    // For now, treat member access similar to array access
+    // This is a placeholder - you'll want to implement proper record access later
+    std::cout << "  ⚠️ Member access not fully implemented, treating as array access\n";
+    
+    // Default to return 0
+    emitI32Const(body, 0);
+}
+
+// ======================================================================
+// Memory Operation Helpers
+// ======================================================================
+
+void WasmCompiler::emitI32Load(std::vector<uint8_t>& body, uint32_t offset) {
+    body.push_back(0x28); // i32.load
+    body.push_back(0x02); // align (2^2 = 4-byte alignment)
+    writeLeb128(body, offset);
+}
+
+void WasmCompiler::emitI32Store(std::vector<uint8_t>& body, uint32_t offset) {
+    body.push_back(0x36); // i32.store
+    body.push_back(0x02); // align (2^2 = 4-byte alignment)
+    writeLeb128(body, offset);
+}
+
+void WasmCompiler::emitF64Load(std::vector<uint8_t>& body, uint32_t offset) {
+    body.push_back(0x2c); // f64.load
+    body.push_back(0x03); // align (2^3 = 8-byte alignment)
+    writeLeb128(body, offset);
+}
+
+void WasmCompiler::emitF64Store(std::vector<uint8_t>& body, uint32_t offset) {
+    body.push_back(0x39); // f64.store
+    body.push_back(0x03); // align (2^3 = 8-byte alignment)
+    writeLeb128(body, offset);
 }
