@@ -1,4 +1,0 @@
-routine main(): integer is
-  var x: integer is 1;
-  return x;
-end
