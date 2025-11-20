@@ -52,6 +52,8 @@ private:
         std::string name;
         std::vector<std::pair<std::string, std::pair<uint8_t, int>>> fields;
         // field_name -> (type, offset_in_bytes)
+        std::unordered_map<std::string, std::string> arrayFieldElementTypes;
+        // field_name -> element_type_name (for array fields only)
         int totalSize;
     };
 
@@ -101,6 +103,9 @@ private:
     // Per-function codegen (called from buildCodeSection)
     void resetLocals();
     void addParametersToLocals(const FuncInfo& F);
+    void collectAllVariableDeclarations(std::shared_ptr<ASTNode> node,
+                                       std::vector<std::shared_ptr<ASTNode>>& varDecls,
+                                       bool insideBody = false);
     std::vector<uint8_t> analyzeLocalVariables(const FuncInfo& F);
     void generateLocalInitializers(std::vector<uint8_t>& body, const FuncInfo& F);
     bool generateFunctionBody(std::vector<uint8_t>& body, const FuncInfo& F);

@@ -343,7 +343,7 @@ std::vector<uint8_t> WasmCompiler::buildCodeSection() {
         auto localsHeader = analyzeLocalVariables(F);
         body.insert(body.end(), localsHeader.begin(), localsHeader.end());
 
-        // Initialize global variables with their initializers (only in main function)
+        // Initialize global variables (only in main function)
         // NOTE: This must happen AFTER localsHeader is inserted, so temp locals are available
         if (F.name == "main") {
             for (auto& [varName, gv] : globalVars) {
@@ -361,6 +361,14 @@ std::vector<uint8_t> WasmCompiler::buildCodeSection() {
                     }
                     
                     // Store to global variable using emitLocalSet (which handles the stack swap)
+                    emitLocalSet(body, varName);
+                } else {
+                    // Initialize to default value (0 for integers, 0.0 for reals)
+                    if (gv.type == 0x7c) {
+                        emitF64Const(body, 0.0);
+                    } else {
+                        emitI32Const(body, 0);
+                    }
                     emitLocalSet(body, varName);
                 }
             }
@@ -413,9 +421,57 @@ void WasmCompiler::addParametersToLocals(const FuncInfo& F) {
     int idx = 0;
     for (auto& p : params->children) {
         if (!p || p->type != ASTNodeType::PARAMETER) continue;
-        localVarIndices[p->value] = idx++;
+        std::string paramName = p->value;
+        localVarIndices[paramName] = idx++;
+        
+        // Check if this parameter is an array type
+        for (auto& pc : p->children) {
+            if (!pc) continue;
+            if (pc->type == ASTNodeType::ARRAY_TYPE) {
+                auto [elemType, elemTypeName, size] = analyzeArrayType(pc);
+                
+                // Register array info for parameter arrays
+                ArrayInfo arrInfo;
+                arrInfo.elemType = elemType;
+                arrInfo.elemTypeName = elemTypeName;
+                arrInfo.size = size; // For parameter arrays, size might be 0 (dynamic)
+                arrInfo.baseOffset = 0; // Parameters are passed as base addresses
+                arrayInfos[paramName] = arrInfo;
+                
+                std::cout << "📋 Array parameter: " << paramName 
+                          << " (elemType: " << (int)elemType << ", size: " << size << ")" << std::endl;
+                break;
+            }
+        }
     }
     nextLocalIndex = idx;
+}
+
+// Helper function to recursively collect all variable declarations
+// Only collects VAR_DECL nodes that are inside BODY nodes (function bodies, loop bodies, if bodies)
+void WasmCompiler::collectAllVariableDeclarations(std::shared_ptr<ASTNode> node,
+                                                   std::vector<std::shared_ptr<ASTNode>>& varDecls,
+                                                   bool insideBody) {
+    if (!node) return;
+    
+    // Track if we're inside a BODY node
+    bool nowInsideBody = insideBody || (node->type == ASTNodeType::BODY);
+    
+    // Collect VAR_DECL nodes only if we're inside a BODY
+    // This excludes record field declarations (which are inside RECORD_TYPE, not BODY)
+    if (node->type == ASTNodeType::VAR_DECL && nowInsideBody) {
+        varDecls.push_back(node);
+    }
+    
+    // Don't recurse into RECORD_TYPE or TYPE_DECL (these contain field declarations, not local variables)
+    if (node->type == ASTNodeType::RECORD_TYPE || node->type == ASTNodeType::TYPE_DECL) {
+        return; // Skip record field declarations
+    }
+    
+    // Recursively process children
+    for (auto& child : node->children) {
+        collectAllVariableDeclarations(child, varDecls, nowInsideBody);
+    }
 }
 
 std::vector<uint8_t> WasmCompiler::analyzeLocalVariables(const FuncInfo& F) {
@@ -437,7 +493,11 @@ std::vector<uint8_t> WasmCompiler::analyzeLocalVariables(const FuncInfo& F) {
         return buf;
     }
 
-    for (auto& s : bodyNode->children) {
+    // Collect ALL variable declarations recursively (including nested ones in loops/if statements)
+    std::vector<std::shared_ptr<ASTNode>> allVarDecls;
+    collectAllVariableDeclarations(bodyNode, allVarDecls, true); // Start inside BODY
+
+    for (auto& s : allVarDecls) {
         if (!s || s->type != ASTNodeType::VAR_DECL) continue;
         const std::string& name = s->value;
         if (localVarIndices.count(name)) continue;
@@ -806,7 +866,7 @@ void WasmCompiler::generateArrayAssignment(std::vector<uint8_t>& body,
         if (arrayInfo.elemType == 0x7c) {
             // f64 store
             body.push_back(0x39); // f64.store
-            body.push_back(0x03); // align (fixed from 0x00)
+            body.push_back(0x02); // 4-byte align (safe for all platforms)
             body.push_back(0x00); // offset
         } else {
             // i32 store
@@ -1096,9 +1156,30 @@ void WasmCompiler::generateExpression(std::vector<uint8_t>& body,
             break;
         case ASTNodeType::UNARY_OP: {
             const std::string& op = e->value;
-            if (op == "not" && !e->children.empty()) {
+            if (e->children.empty()) {
+                emitI32Const(body, 0);
+                break;
+            }
+            
+            if (op == "not") {
                 generateExpression(body, e->children[0], F);
-                body.push_back(0x45);
+                body.push_back(0x45); // i32.eqz
+            } else if (op == "-") {
+                // Unary minus - need to handle both integer and real
+                generateExpression(body, e->children[0], F);
+                ValueType exprType = getExpressionType(e->children[0], F);
+                if (exprType == ValueType::REAL) {
+                    // For real: push 0.0 and subtract
+                    emitF64Const(body, 0.0);
+                    body.push_back(0xa1); // f64.sub (0.0 - value = -value)
+                } else {
+                    // For integer: push 0 and subtract
+                    emitI32Const(body, 0);
+                    body.push_back(0x6b); // i32.sub (0 - value = -value)
+                }
+            } else if (op == "+") {
+                // Unary plus - just evaluate the expression (no-op)
+                generateExpression(body, e->children[0], F);
             } else {
                 emitI32Const(body, 0);
             }
@@ -1110,6 +1191,35 @@ void WasmCompiler::generateExpression(std::vector<uint8_t>& body,
         case ASTNodeType::PRINT_STMT:
             generatePrintStatement(body, e, F);
             break;
+        case ASTNodeType::SIZE_EXPRESSION: {
+            // size(array) - returns the size of the array
+            if (!e->children.empty() && e->children[0]) {
+                auto arrayRef = e->children[0];
+                if (arrayRef->type == ASTNodeType::IDENTIFIER) {
+                    std::string arrayName = arrayRef->value;
+                    // Check local arrays
+                    auto it = arrayInfos.find(arrayName);
+                    if (it != arrayInfos.end()) {
+                        emitI32Const(body, it->second.size);
+                    } else {
+                        // Check global arrays
+                        auto globalIt = globalArrays.find(arrayName);
+                        if (globalIt != globalArrays.end()) {
+                            emitI32Const(body, globalIt->second.size);
+                        } else {
+                            std::cout << "  ⚠️ Unknown array in size(): " << arrayName << "\n";
+                            emitI32Const(body, 0);
+                        }
+                    }
+                } else {
+                    std::cout << "  ⚠️ size() only supports simple array identifiers\n";
+                    emitI32Const(body, 0);
+                }
+            } else {
+                emitI32Const(body, 0);
+            }
+            break;
+        }
         default:
             std::cout << "  ⚠️ Unhandled expr: " << tname(e->type) << "\n";
             emitI32Const(body, 0);
@@ -1248,7 +1358,7 @@ void WasmCompiler::emitLocalGet(std::vector<uint8_t>& body, const std::string& n
         emitI32Const(body, globalIt->second.memoryOffset);
         if (globalIt->second.type == 0x7c) {
             body.push_back(0x2c); // f64.load
-            body.push_back(0x03); // 8-byte align
+            body.push_back(0x02); // 4-byte align (safe for all platforms)
         } else {
             body.push_back(0x28); // i32.load
             body.push_back(0x02); // 4-byte align
@@ -1378,7 +1488,7 @@ void WasmCompiler::emitLocalSet(std::vector<uint8_t>& body, const std::string& n
         
         if (globalIt->second.type == 0x7c) {
             body.push_back(0x39); // f64.store (consumes [value, address])
-            body.push_back(0x03); // 8-byte align
+            body.push_back(0x02); // 4-byte align (safe for all platforms)
         } else {
             body.push_back(0x36); // i32.store (consumes [value, address])
             body.push_back(0x02); // 4-byte align
@@ -1390,7 +1500,11 @@ void WasmCompiler::emitLocalSet(std::vector<uint8_t>& body, const std::string& n
     // Check if it's a local variable
     auto it = localVarIndices.find(name);
     if (it == localVarIndices.end()) {
-        std::cout << "  ⚠️ Unknown variable set: " << name << "\n";
+        // Variable doesn't exist (probably removed by optimization)
+        // But the value is already on the stack from generateExpression
+        // Just drop it since we can't store it anywhere
+        std::cout << "  ⚠️ Unknown variable set: " << name << " (dropping value)\n";
+        body.push_back(0x1a); // drop
         return;
     }
     body.push_back(0x21);
@@ -1575,12 +1689,96 @@ std::tuple<int, uint8_t, int> WasmCompiler::resolveArrayAccessMember(std::vector
     auto arrayRef = arrayAccess->children[0];
     auto indexExpr = arrayAccess->children[1];
     
-    if (!arrayRef || !indexExpr || arrayRef->type != ASTNodeType::IDENTIFIER) {
+    if (!arrayRef || !indexExpr) {
         std::cout << "⚠️ Malformed array access in member resolution\n";
         return {-1, 0x7f, 0};
     }
     
-    std::string arrayName = arrayRef->value;
+    std::string arrayName;
+    bool isGlobalArray = false;
+    
+    if (arrayRef->type == ASTNodeType::IDENTIFIER) {
+        arrayName = arrayRef->value;
+    } else if (arrayRef->type == ASTNodeType::MEMBER_ACCESS) {
+        // Array field in record: record.arrayField[index]
+        // Use resolveArrayMember to get the base address
+        auto [baseAddr, elemType, arrSize] = resolveArrayMember(body, arrayRef, F);
+        if (baseAddr == -1) {
+            std::cout << "⚠️ Failed to resolve array member in resolveArrayAccessMember\n";
+            return {-1, 0x7f, 0};
+        }
+        // Base address is already on stack from resolveArrayMember
+        // Now we need to find the element type name to get the record type
+        auto memberBase = arrayRef->children[0];
+        std::string arrayFieldName = arrayRef->value;
+        
+        if (memberBase && memberBase->type == ASTNodeType::IDENTIFIER) {
+            std::string recordName = memberBase->value;
+            auto recordIt = recordVariables.find(recordName);
+            if (recordIt != recordVariables.end()) {
+                auto recordTypeIt = recordTypes.find(recordIt->second.recordType);
+                if (recordTypeIt != recordTypes.end()) {
+                    // Get the element type name from the array field
+                    auto elemTypeIt = recordTypeIt->second.arrayFieldElementTypes.find(arrayFieldName);
+                    if (elemTypeIt == recordTypeIt->second.arrayFieldElementTypes.end()) {
+                        std::cout << "⚠️ Array field '" << arrayFieldName << "' not found in record type\n";
+                        return {-1, 0x7f, 0};
+                    }
+                    
+                    std::string recordTypeName = elemTypeIt->second; // Element type name (e.g., "Employee")
+                    
+                    // Find the record type for the element
+                    auto elemRecordTypeIt = recordTypes.find(recordTypeName);
+                    if (elemRecordTypeIt == recordTypes.end()) {
+                        std::cout << "⚠️ Element type '" << recordTypeName << "' is not a record type\n";
+                        return {-1, 0x7f, 0};
+                    }
+                    
+                    // Find field offset within the element record
+                    int fieldOffset = -1;
+                    uint8_t fieldType = 0x7f;
+                    int fieldSize = 0;
+                    
+                    for (const auto& field : elemRecordTypeIt->second.fields) {
+                        if (field.first == fieldName) {
+                            fieldOffset = field.second.second;
+                            fieldType = field.second.first;
+                            if (fieldType == 0x7c) fieldSize = 8;
+                            else fieldSize = 4;
+                            break;
+                        }
+                    }
+                    
+                    if (fieldOffset == -1) {
+                        std::cout << "⚠️ Unknown field '" << fieldName << "' in record '" 
+                                  << recordTypeName << "'\n";
+                        return {-1, 0x7f, 0};
+                    }
+                    
+                    // Calculate index * record_size
+                    generateExpression(body, indexExpr, F);
+                    int recordSize = elemRecordTypeIt->second.totalSize;
+                    emitI32Const(body, recordSize);
+                    body.push_back(0x6c); // i32.mul
+                    body.push_back(0x6a); // i32.add (add to base address already on stack)
+                    
+                    // Add field offset
+                    emitI32Const(body, fieldOffset);
+                    body.push_back(0x6a); // i32.add
+                    
+                    return {0, fieldType, fieldSize};
+                }
+            }
+        }
+        return {-1, 0x7f, 0};
+    } else {
+        std::cout << "⚠️ Unsupported array reference type in resolveArrayAccessMember: " << tname(arrayRef->type) << "\n";
+        return {-1, 0x7f, 0};
+    }
+    
+    if (arrayName.empty()) {
+        return {-1, 0x7f, 0};
+    }
     
     // Find array info to get the record type
     auto arrayIt = arrayInfos.find(arrayName);
@@ -1730,7 +1928,7 @@ void WasmCompiler::generateMemberAccess(std::vector<uint8_t>& body,
     // Load the field value
     if (fieldType == 0x7c) {
         body.push_back(0x2c); // f64.load
-        body.push_back(0x03); // 8-byte align
+        body.push_back(0x02); // 4-byte align (safe for all platforms)
     } else {
         body.push_back(0x28); // i32.load  
         body.push_back(0x02); // 4-byte align
@@ -1755,14 +1953,14 @@ void WasmCompiler::emitI32Store(std::vector<uint8_t>& body, uint32_t offset) {
 }
 
 void WasmCompiler::emitF64Load(std::vector<uint8_t>& body, uint32_t offset) {
-    body.push_back(0x2c); // f64.load
-    body.push_back(0x03); // align (2^3 = 8-byte alignment)
+        body.push_back(0x2c); // f64.load
+        body.push_back(0x02); // 4-byte align (safe for all platforms) (2^3 = 8-byte alignment)
     writeUnsignedLeb128(body, offset);
 }
 
 void WasmCompiler::emitF64Store(std::vector<uint8_t>& body, uint32_t offset) {
     body.push_back(0x39); // f64.store
-    body.push_back(0x03); // align (2^3 = 8-byte alignment)
+    body.push_back(0x02); // 4-byte align (safe for all platforms)
     writeUnsignedLeb128(body, offset);
 }
 
@@ -1814,6 +2012,14 @@ void WasmCompiler::collectRecordTypes(std::shared_ptr<ASTNode> program) {
                     auto [fieldType, fieldSize] = analyzeFieldType(field);
                     
                     rec.fields.push_back({fieldName, {fieldType, rec.totalSize}});
+                    
+                    // If this is an array field, store the element type name
+                    if (field->children.size() > 0 && field->children[0] &&
+                        field->children[0]->type == ASTNodeType::ARRAY_TYPE) {
+                        auto [elemType, elemTypeName, arrSize] = analyzeArrayType(field->children[0]);
+                        rec.arrayFieldElementTypes[fieldName] = elemTypeName;
+                    }
+                    
                     rec.totalSize += fieldSize;
                 }
             }
@@ -1910,72 +2116,19 @@ void WasmCompiler::generateMemberAssignment(std::vector<uint8_t>& body,
         body.push_back(0x6a);               // i32.add
         
     } else if (base->type == ASTNodeType::ARRAY_ACCESS) {
-        // Array of records: array[index].field
-        auto arrayRef = base->children[0];
-        auto indexExpr = base->children[1];
+        // Array of records: array[index].field OR record.arrayField[index].field
+        // Use resolveArrayAccessMember which handles both cases
+        auto result = resolveArrayAccessMember(body, base, fieldName, F);
+        int baseAddr = std::get<0>(result);
+        fieldType = std::get<1>(result);
         
-        if (!arrayRef || !indexExpr || arrayRef->type != ASTNodeType::IDENTIFIER) {
-            std::cout << "⚠️ Malformed array access in member assignment\n";
+        if (baseAddr == -1) {
+            std::cout << "⚠️ Failed to resolve array access member in assignment\n";
             generateExpression(body, rhs, F);
             return;
         }
         
-        std::string arrayName = arrayRef->value;
-        
-        // Find array info to get the record type
-        auto arrayIt = arrayInfos.find(arrayName);
-        if (arrayIt == arrayInfos.end()) {
-            std::cout << "⚠️ Unknown array: " << arrayName << "\n";
-            generateExpression(body, rhs, F);
-            return;
-        }
-        
-        std::string recordTypeName = arrayIt->second.elemTypeName;
-        
-        // Verify it's actually a record type
-        auto recordTypeIt = recordTypes.find(recordTypeName);
-        if (recordTypeIt == recordTypes.end()) {
-            std::cout << "⚠️ Array element type '" << recordTypeName << "' is not a record type\n";
-            generateExpression(body, rhs, F);
-            return;
-        }
-        
-        // Find field offset within the record
-        int fieldOffset = -1;
-        
-        for (const auto& field : recordTypeIt->second.fields) {
-            if (field.first == fieldName) {
-                fieldOffset = field.second.second;
-                fieldType = field.second.first;
-                break;
-            }
-        }
-        
-        if (fieldOffset == -1) {
-            std::cout << "⚠️ Unknown field '" << fieldName << "' in record '" 
-                      << recordTypeName << "'\n";
-            generateExpression(body, rhs, F);
-            return;
-        }
-        
-        // Calculate address: array[index] + field_offset
-        // First get array base address
-        emitLocalGet(body, arrayName);
-        
-        // Calculate index * record_size
-        generateExpression(body, indexExpr, F);
-        
-        // Multiply by record size
-        int recordSize = recordTypeIt->second.totalSize;
-        emitI32Const(body, recordSize);
-        body.push_back(0x6c); // i32.mul
-        
-        // Add to base address to get array[index] address
-        body.push_back(0x6a); // i32.add
-        
-        // Now add field offset
-        emitI32Const(body, fieldOffset);
-        body.push_back(0x6a); // i32.add
+        // Address is already on stack from resolveArrayAccessMember
         
     } else {
         std::cout << "⚠️ Member assignment on unsupported base type: " << tname(base->type) << "\n";
@@ -1993,8 +2146,8 @@ void WasmCompiler::generateMemberAssignment(std::vector<uint8_t>& body,
         
         // Store the value to memory (pops value, then address)
         if (fieldType == 0x7c) {
-            body.push_back(0x39); // f64.store
-            body.push_back(0x03); // 8-byte align
+        body.push_back(0x39); // f64.store
+        body.push_back(0x02); // 4-byte align (safe for all platforms)
         } else {
             body.push_back(0x36); // i32.store  
             body.push_back(0x02); // 4-byte align
@@ -2088,7 +2241,7 @@ void WasmCompiler::generateSimpleArrayAccess(std::vector<uint8_t>& body,
     // Load the value from memory
     if (arrayInfo.elemType == 0x7c) {
         body.push_back(0x2c); // f64.load
-        body.push_back(0x03); // 8-byte align
+        body.push_back(0x02); // 4-byte align (WASM allows smaller alignment than natural)
     } else {
         body.push_back(0x28); // i32.load
         body.push_back(0x02); // 4-byte align
@@ -2174,8 +2327,8 @@ void WasmCompiler::generateMemberArrayAccess(std::vector<uint8_t>& body,
         
         // Load the value
         if (elemType == 0x7c) {
-            body.push_back(0x2c); // f64.load
-            body.push_back(0x03); // align
+        body.push_back(0x2c); // f64.load
+        body.push_back(0x02); // 4-byte align (safe for all platforms)
         } else {
             body.push_back(0x28); // i32.load
             body.push_back(0x02); // align
@@ -2249,7 +2402,7 @@ void WasmCompiler::generateMemberArrayAccess(std::vector<uint8_t>& body,
         // Load the value - FIX: Use proper alignment
         if (elemType == 0x7c) {
             body.push_back(0x2c); // f64.load
-            body.push_back(0x03); // 8-byte align
+            body.push_back(0x02); // 4-byte align (safe for all platforms)
         } else {
             body.push_back(0x28); // i32.load  
             body.push_back(0x02); // 4-byte align - THIS IS IMPORTANT!
@@ -2480,6 +2633,9 @@ ValueType WasmCompiler::getExpressionType(std::shared_ptr<ASTNode> expr, const F
             }
             return ValueType::INTEGER;
         }
+        
+        case ASTNodeType::SIZE_EXPRESSION:
+            return ValueType::INTEGER;
         
         default:
             return ValueType::INTEGER;

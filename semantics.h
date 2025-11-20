@@ -1100,41 +1100,50 @@ private:
         }
     }
     void removeAssignmentsToVariable(const std::string& varName, std::shared_ptr<ASTNode> node) {
-        if (!node) return;
-        
-        if (node->type == ASTNodeType::BODY || node->type == ASTNodeType::PROGRAM) {
-            std::vector<std::shared_ptr<ASTNode>> newChildren;
-            for (auto& child : node->children) {
-                bool shouldKeep = true;
-                
-                if (child && child->type == ASTNodeType::ASSIGNMENT) {
-                    std::string target = getAssignmentTarget(child);
-                    if (target == varName) {
+    if (!node) return;
+    
+    if (node->type == ASTNodeType::BODY || node->type == ASTNodeType::PROGRAM) {
+        std::vector<std::shared_ptr<ASTNode>> newChildren;
+        for (auto& child : node->children) {
+            bool shouldKeep = true;
+            
+            if (child && child->type == ASTNodeType::ASSIGNMENT) {
+                std::string target = getAssignmentTarget(child);
+                if (target == varName) {
+                    // Check if RHS has side effects
+                    bool rhsHasSideEffects = false;
+                    if (child->children.size() > 1 && child->children[1]) {
+                        rhsHasSideEffects = hasSideEffectsOrExternalAccess(child->children[1]);
+                    }
+                    
+                    if (rhsHasSideEffects) {
+                        std::cout << "💾 Converting assignment to standalone call for '" << varName << "'" << std::endl;
+                        // Extract the RHS and add it as standalone expression
+                        auto rhs = child->children[1];
+                        newChildren.push_back(rhs);
+                        shouldKeep = false;  // Don't keep the original assignment
+                    } else {
                         std::cout << "    🔥 Removing assignment to: " << varName << std::endl;
                         shouldKeep = false;
                     }
                 }
-                
-                if (shouldKeep) {
-                    newChildren.push_back(child);
-                    // Recursively process this child to remove nested assignments
-                    removeAssignmentsToVariable(varName, child);
-                }
             }
             
-            if (newChildren.size() != node->children.size()) {
-                node->children = newChildren;
-                std::cout << "    🔥 Removed " << (node->children.size() - newChildren.size()) 
-                        << " assignment(s) to '" << varName << "'" << std::endl;
+            if (shouldKeep) {
+                    newChildren.push_back(child);
+            }
+        }
+            
+        if (newChildren.size() != node->children.size()) {
+            node->children = newChildren;
             }
         } else {
-            // For non-body nodes, recursively process all children
+            // Recursive processing for non-body nodes
             for (auto& child : node->children) {
                 removeAssignmentsToVariable(varName, child);
             }
         }
     }
-
     void optimizeUnusedDeclarations(std::shared_ptr<ASTNode> node) {
         if (!node) return;
 
@@ -1235,9 +1244,10 @@ private:
                     // Check if RHS has side effects
                     bool rhsHasSideEffects = false;
                     if (child->children.size() > 1 && child->children[1]) {
+                        std::cout << std::endl;
                         rhsHasSideEffects = hasSideEffectsOrExternalAccess(child->children[1]);
                     }
-                    
+                     
                     if (rhsHasSideEffects) {
                         // PRESERVE the function call but remove the assignment
                         // Convert: unusedResult := sideEffectFunction()
@@ -1248,11 +1258,13 @@ private:
                         auto rhs = child->children[1];
                         newChildren.push_back(rhs);
                         preservedSideEffects++;
+                        continue;
                     } else {
                         // Remove the entire assignment (no side effects)
                         std::cout << "🔥 OPTIMIZATION: Removing assignment to write-only variable '" << target << "'" << std::endl;
                         removeAssignmentsToVariable(target, node);
                         removedCount++;
+                        continue;
                     }
                 }
                 else {
