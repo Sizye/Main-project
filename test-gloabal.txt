@@ -1,0 +1,4 @@
+var counter: integer is 1234;
+routine main(): integer is
+    return counter;
+end
