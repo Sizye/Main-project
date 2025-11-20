@@ -1166,15 +1166,16 @@ void WasmCompiler::generateExpression(std::vector<uint8_t>& body,
                 body.push_back(0x45); // i32.eqz
             } else if (op == "-") {
                 // Unary minus - need to handle both integer and real
-                generateExpression(body, e->children[0], F);
                 ValueType exprType = getExpressionType(e->children[0], F);
                 if (exprType == ValueType::REAL) {
-                    // For real: push 0.0 and subtract
+                    // Push 0.0 first, then the operand, so we compute (0.0 - value)
                     emitF64Const(body, 0.0);
+                    generateExpression(body, e->children[0], F);
                     body.push_back(0xa1); // f64.sub (0.0 - value = -value)
                 } else {
-                    // For integer: push 0 and subtract
+                    // Treat INTEGER/BOOLEAN the same (both i32 in WASM)
                     emitI32Const(body, 0);
+                    generateExpression(body, e->children[0], F);
                     body.push_back(0x6b); // i32.sub (0 - value = -value)
                 }
             } else if (op == "+") {

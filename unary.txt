@@ -1,0 +1,5 @@
+routine main(): integer is
+    var counter: integer is -23;
+    
+    return -counter;
+end

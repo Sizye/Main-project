@@ -117,9 +117,9 @@ wasm-while-test: $(TARGET)
 	@printf 'routine main(): integer is\n'               >  test_while.txt
 	@printf '  var i: integer is 0;\n'                   >> test_while.txt
 	@printf '  var s: integer is 0;\n'                   >> test_while.txt
-	@printf '  while i < 63 loop\n'                      >> test_while.txt
+	@printf '  while i < 1000 loop\n'                      >> test_while.txt
 	@printf '    s := s + 1;\n'                          >> test_while.txt
-	@printf '    i := i + 1;\n'                          >> test_while.txt
+	@printf '    i := i + 2;\n'                          >> test_while.txt
 	@printf '  end\n'                                   >> test_while.txt
 	@printf '  return s;\n'                             >> test_while.txt
 	@printf 'end\n'                                     >> test_while.txt
@@ -146,10 +146,12 @@ wasm-call-nested: $(TARGET)
 	@echo "=== TESTING NESTED CALL ==="
 	@printf 'routine add(a: integer, b: integer): integer is\n' >  test_call2.txt
 	@printf '  return a + b;\n'                                 >> test_call2.txt
+	@printf 'routine devide(a: integer, b: integer): integer is\n' >  test_call2.txt
+	@printf '  return a / b;\n'                                 >> test_call2.txt
 	@printf 'end\n'                                             >> test_call2.txt
 	@printf 'routine main(): integer is\n'                      >> test_call2.txt
 	@printf '  var x: integer is add(add(1, 2), 3);\n'          >> test_call2.txt
-	@printf '  return add(add(1, 2), 3);\n'                     				>> test_call2.txt
+	@printf '  return add(devide(1000, 200), 1);\n'                     				>> test_call2.txt
 	@printf 'end\n'                                             >> test_call2.txt
 	@./$(TARGET) test_call2.txt
 	@echo "--- Running generated WASM (expect 6) ---"

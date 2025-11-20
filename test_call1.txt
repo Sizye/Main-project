@@ -1,0 +1,6 @@
+routine add(a: integer, b: integer): integer is
+  return a + b;
+end
+routine main(): integer is
+  return add(2, 3);
+end

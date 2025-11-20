@@ -1,0 +1,11 @@
+var globalCounter: integer is 23;
+
+routine main(): integer is
+    var globalCounter: integer is 24533;
+    var local1: integer is 125;
+    if 3 > 0 then
+        var local1: integer is 543;
+        return local1;
+    end
+    return globalCounter;
+end

@@ -1,0 +1,7 @@
+routine devide(a: integer, b: integer): integer is
+  return a / b;
+end
+routine main(): integer is
+  var x: integer is add(add(1, 2), 3);
+  return add(devide(1000, 200), 1);
+end
