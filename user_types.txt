@@ -7,9 +7,9 @@ type Person is record
 end;
 
 routine main(): integer is
-    type myPerson is 546;
+    type myPerson is Person;
 
     var asd: myPerson;
-    asd := 123;
-    return asd;
+    asd.id := -123;
+    return -asd.id;
 end

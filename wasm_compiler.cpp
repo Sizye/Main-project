@@ -1426,11 +1426,11 @@ void WasmCompiler::emitLocalSet(std::vector<uint8_t>& body, const std::string& n
         body.push_back(0x21); // local.set tempAddr
         writeUnsignedLeb128(body, tempAddr);
         
-        // Re-load in order: value (top), address (next)
-        body.push_back(0x20); // local.get tempValue
-        writeUnsignedLeb128(body, tempValue);
-        body.push_back(0x20); // local.get tempAddr
+        // Re-load so that value is on top of the stack
+        body.push_back(0x20); // local.get tempAddr (address lower on stack)
         writeUnsignedLeb128(body, tempAddr);
+        body.push_back(0x20); // local.get tempValue (value on top)
+        writeUnsignedLeb128(body, tempValue);
         
         if (globalIt->second.type == 0x7c) {
             body.push_back(0x39); // f64.store
