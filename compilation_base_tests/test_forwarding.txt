@@ -1,5 +1,4 @@
-routine add(a: integer, b: integer): integer;
-var sd: integer;
+routine add(a: integer, b: integer);
 routine add(a: integer, b: integer): integer is
   return a + b;
 end

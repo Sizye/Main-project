@@ -11,7 +11,7 @@ routine main(): real is
     asdg.id := 34.5;
     var i: real;
     i := 234+33.453453;
-    var employees: array[10] integer;
-    employees[1] := 1 + 10034.345;
-    return asdg.id;
+    var employees: array[10] Person;
+    employees[1].name[32] := 1 + 10034.345;
+    return employees[1].name[32];
 end

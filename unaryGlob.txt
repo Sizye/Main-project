@@ -1,5 +1,6 @@
-var counter: integer is -23;
+
 
 routine main(): integer is
+    var counter: integer is 1234;
     return -counter;
 end

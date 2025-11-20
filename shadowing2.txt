@@ -5,7 +5,6 @@ routine main(): integer is
     var local1: integer is 125;
     if 3 > 0 then
         var local1: integer is 543;
-        return local1;
     end
-    return globalCounter;
+    return local1;
 end

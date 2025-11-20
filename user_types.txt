@@ -1,0 +1,15 @@
+type Person is record
+    var salary: real;
+    var id: integer;
+    var name: array[50] integer; 
+    var age: integer;
+    var isManager: boolean;
+end;
+
+routine main(): integer is
+    type myPerson is 546;
+
+    var asd: myPerson;
+    asd := 123;
+    return asd;
+end
