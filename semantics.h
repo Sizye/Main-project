@@ -80,6 +80,161 @@ private:
     void declareRoutine(const std::string& n) { 
         if (!scopeStack.empty()) scopeStack.back().routines.insert(n); 
     }
+
+    // ===== Name normalization for shadowing =====
+    struct NameScopeFrame {
+        std::vector<std::string> vars;
+        std::vector<std::string> types;
+        std::vector<std::string> routines;
+    };
+    std::vector<NameScopeFrame> nameScopeStack;
+    std::unordered_map<std::string, std::vector<std::string>> varAliasStack;
+    std::unordered_map<std::string, std::vector<std::string>> typeAliasStack;
+    std::unordered_map<std::string, std::vector<std::string>> routineAliasStack;
+    int varAliasCounter = 0;
+    int typeAliasCounter = 0;
+    int routineAliasCounter = 0;
+    
+    void resetNameNormalization() {
+        nameScopeStack.clear();
+        varAliasStack.clear();
+        typeAliasStack.clear();
+        routineAliasStack.clear();
+        varAliasCounter = typeAliasCounter = routineAliasCounter = 0;
+    }
+    
+    void pushNameScope() { nameScopeStack.emplace_back(); }
+    void popNameScope() {
+        if (nameScopeStack.empty()) return;
+        auto frame = nameScopeStack.back();
+        for (const auto& n : frame.vars) {
+            auto it = varAliasStack.find(n);
+            if (it != varAliasStack.end()) {
+                if (!it->second.empty()) it->second.pop_back();
+                if (it->second.empty()) varAliasStack.erase(it);
+            }
+        }
+        for (const auto& n : frame.types) {
+            auto it = typeAliasStack.find(n);
+            if (it != typeAliasStack.end()) {
+                if (!it->second.empty()) it->second.pop_back();
+                if (it->second.empty()) typeAliasStack.erase(it);
+            }
+        }
+        for (const auto& n : frame.routines) {
+            auto it = routineAliasStack.find(n);
+            if (it != routineAliasStack.end()) {
+                if (!it->second.empty()) it->second.pop_back();
+                if (it->second.empty()) routineAliasStack.erase(it);
+            }
+        }
+        nameScopeStack.pop_back();
+    }
+    
+    std::string registerVarAlias(const std::string& name) {
+        auto& stack = varAliasStack[name];
+        std::string alias = stack.empty() ? name : name + "#" + std::to_string(++varAliasCounter);
+        stack.push_back(alias);
+        if (!nameScopeStack.empty()) nameScopeStack.back().vars.push_back(name);
+        return alias;
+    }
+    
+    std::string registerTypeAlias(const std::string& name) {
+        auto& stack = typeAliasStack[name];
+        std::string alias = stack.empty() ? name : name + "#" + std::to_string(++typeAliasCounter);
+        stack.push_back(alias);
+        if (!nameScopeStack.empty()) nameScopeStack.back().types.push_back(name);
+        return alias;
+    }
+    
+    std::string registerRoutineAlias(const std::string& name) {
+        auto& stack = routineAliasStack[name];
+        std::string alias = stack.empty() ? name : name + "#" + std::to_string(++routineAliasCounter);
+        stack.push_back(alias);
+        if (!nameScopeStack.empty()) nameScopeStack.back().routines.push_back(name);
+        return alias;
+    }
+    
+    std::string resolveVarAlias(const std::string& name) const {
+        auto it = varAliasStack.find(name);
+        if (it == varAliasStack.end() || it->second.empty()) return name;
+        return it->second.back();
+    }
+    
+    std::string resolveTypeAlias(const std::string& name) const {
+        auto it = typeAliasStack.find(name);
+        if (it == typeAliasStack.end() || it->second.empty()) return name;
+        return it->second.back();
+    }
+    
+    std::string resolveRoutineAlias(const std::string& name) const {
+        auto it = routineAliasStack.find(name);
+        if (it == routineAliasStack.end() || it->second.empty()) return name;
+        return it->second.back();
+    }
+    
+    bool startsNewNameScope(std::shared_ptr<ASTNode> node,
+                            std::shared_ptr<ASTNode> parent) {
+        if (!node) return false;
+        if (node->type == ASTNodeType::PROGRAM) return true;
+        if (node->type == ASTNodeType::ROUTINE_DECL || 
+            node->type == ASTNodeType::ROUTINE_FORWARD_DECL) return true;
+        if (node->type == ASTNodeType::BODY) {
+            if (parent && parent->type == ASTNodeType::ROUTINE_DECL) return false;
+            return true;
+        }
+        return false;
+    }
+    
+    bool isRecordFieldContext(std::shared_ptr<ASTNode> parent,
+                              std::shared_ptr<ASTNode> grandparent) {
+        return parent && grandparent &&
+               parent->type == ASTNodeType::BODY &&
+               grandparent->type == ASTNodeType::RECORD_TYPE;
+    }
+    
+    void normalizeShadowedNames(std::shared_ptr<ASTNode> node,
+                                std::shared_ptr<ASTNode> parent = nullptr,
+                                std::shared_ptr<ASTNode> grandparent = nullptr) {
+        if (!node) return;
+        bool pushed = startsNewNameScope(node, parent);
+        if (pushed) pushNameScope();
+        
+        switch (node->type) {
+            case ASTNodeType::VAR_DECL: {
+                if (!isRecordFieldContext(parent, grandparent)) {
+                    node->value = registerVarAlias(node->value);
+                }
+                break;
+            }
+            case ASTNodeType::PARAMETER:
+                node->value = registerVarAlias(node->value);
+                break;
+            case ASTNodeType::TYPE_DECL:
+                node->value = registerTypeAlias(node->value);
+                break;
+            case ASTNodeType::ROUTINE_DECL:
+            case ASTNodeType::ROUTINE_FORWARD_DECL:
+                node->value = registerRoutineAlias(node->value);
+                break;
+            default:
+                break;
+        }
+        
+        if (node->type == ASTNodeType::IDENTIFIER) {
+            node->value = resolveVarAlias(node->value);
+        } else if (node->type == ASTNodeType::ROUTINE_CALL) {
+            node->value = resolveRoutineAlias(node->value);
+        } else if (node->type == ASTNodeType::USER_TYPE) {
+            node->value = resolveTypeAlias(node->value);
+        }
+        
+        for (auto& child : node->children) {
+            normalizeShadowedNames(child, node, parent);
+        }
+        
+        if (pushed) popNameScope();
+    }
     std::string astNodeTypeToString(ASTNodeType type) {
         switch (type) {
             case ASTNodeType::PROGRAM: return "PROGRAM";
@@ -124,6 +279,9 @@ public:
             error("AST is null");
             return false;
         }
+        
+        resetNameNormalization();
+        normalizeShadowedNames(ast);
         
         // PASS 0: Collect type definitions FIRST
         collectTypeDefinitions(ast);

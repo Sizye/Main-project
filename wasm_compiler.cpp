@@ -85,6 +85,8 @@ bool WasmCompiler::collectFunctions(std::shared_ptr<ASTNode> program) {
     funcIndexByName.clear();
     globalVars.clear();
     globalArrays.clear();
+    globalRecordVariables.clear();
+    recordVariables.clear();
     globalMemoryOffset = 0;
 
     collectRecordTypes(program);
@@ -142,6 +144,12 @@ bool WasmCompiler::collectFunctions(std::shared_ptr<ASTNode> program) {
                     if (it != recordTypes.end()) {
                         gv.type = 0x7f; // i32 base address
                         gv.size = it->second.totalSize;
+                        
+                        RecordVarInfo recVar;
+                        recVar.recordType = typeNode->value;
+                        recVar.baseOffset = gv.memoryOffset;
+                        recVar.size = gv.size;
+                        globalRecordVariables[gv.name] = recVar;
                     } else {
                         gv.type = 0x7f;
                         gv.size = 4;
@@ -374,8 +382,6 @@ std::vector<uint8_t> WasmCompiler::buildCodeSection() {
             }
         }
 
-        generateLocalInitializers(body, F);
-
         bool hasReturn = generateFunctionBody(body, F);
 
         // Only add default return if function has return type but no explicit return statement
@@ -408,7 +414,7 @@ std::vector<uint8_t> WasmCompiler::buildCodeSection() {
 void WasmCompiler::resetLocals() {
     localVarIndices.clear();
     arrayInfos.clear();  // Clear array info for each function
-    recordVariables.clear();
+    recordVariables = globalRecordVariables;
     nextLocalIndex = 0;
 }
 
@@ -584,31 +590,32 @@ std::vector<uint8_t> WasmCompiler::analyzeLocalVariables(const FuncInfo& F) {
     return buf;
 }
 
-void WasmCompiler::generateLocalInitializers(std::vector<uint8_t>& body, const FuncInfo& F) {
-    std::shared_ptr<ASTNode> bodyNode = nullptr;
-    for (auto& ch : F.node->children) {
-        if (ch && ch->type == ASTNodeType::BODY) { bodyNode = ch; break; }
-    }
-    if (!bodyNode) return;
-
-    for (auto& s : bodyNode->children) {
-        if (!s || s->type != ASTNodeType::VAR_DECL) continue;
-        const std::string& name = s->value;
-        
-        // Skip if it's a global variable (globals are initialized separately if needed)
-        if (globalVars.find(name) != globalVars.end() || globalArrays.find(name) != globalArrays.end()) {
-            continue;
-        }
-        
-        auto it = localVarIndices.find(name);
-        if (it == localVarIndices.end()) continue;
-
-        if (s->children.size() >= 2 && s->children[1]) {
-            generateExpression(body, s->children[1], F);
-            // Use emitLocalSet which handles both local and global (though globals are skipped above)
-            emitLocalSet(body, name);
+void WasmCompiler::generateVarDeclaration(std::vector<uint8_t>& body,
+                                          std::shared_ptr<ASTNode> decl,
+                                          const FuncInfo& F) {
+    if (!decl) return;
+    const std::string& name = decl->value;
+    if (decl->children.size() < 2 || !decl->children[1]) return;
+    
+    auto initializer = decl->children[1];
+    generateExpression(body, initializer, F);
+    
+    ValueType sourceType = getExpressionType(initializer, F);
+    ValueType targetType = ValueType::UNKNOWN;
+    if (!decl->children.empty() && decl->children[0]) {
+        auto typeNode = decl->children[0];
+        if (typeNode->type == ASTNodeType::PRIMITIVE_TYPE) {
+            if (typeNode->value == "integer") targetType = ValueType::INTEGER;
+            else if (typeNode->value == "real") targetType = ValueType::REAL;
+            else if (typeNode->value == "boolean") targetType = ValueType::BOOLEAN;
         }
     }
+    
+    if (targetType != ValueType::UNKNOWN && sourceType != targetType) {
+        emitTypeConversion(body, sourceType, targetType);
+    }
+    
+    emitLocalSet(body, name);
 }
 
 bool WasmCompiler::generateFunctionBody(std::vector<uint8_t>& body, const FuncInfo& F) {
@@ -623,6 +630,7 @@ bool WasmCompiler::generateFunctionBody(std::vector<uint8_t>& body, const FuncIn
         if (!s) continue;
         switch (s->type) {
             case ASTNodeType::VAR_DECL:
+                generateVarDeclaration(body, s, F);
                 break;
             case ASTNodeType::ASSIGNMENT:
                 generateAssignment(body, s, F);
@@ -899,7 +907,7 @@ void WasmCompiler::generateIfStatement(std::vector<uint8_t>& body,
                 case ASTNodeType::WHILE_LOOP:  generateWhileLoop(body, s, F); break;
                 case ASTNodeType::FOR_LOOP:    generateForLoop(body, s, F); break;
                 case ASTNodeType::RETURN_STMT: generateReturn(body, s, F); break;
-                case ASTNodeType::VAR_DECL:    break;
+                case ASTNodeType::VAR_DECL:    generateVarDeclaration(body, s, F); break;
                 default:
                     std::cout << "  ⚠️ Unhandled THEN stmt: " << tname(s->type) << "\n";
                     break;
@@ -917,7 +925,7 @@ void WasmCompiler::generateIfStatement(std::vector<uint8_t>& body,
                     case ASTNodeType::WHILE_LOOP:  generateWhileLoop(body, s, F); break;
                     case ASTNodeType::FOR_LOOP:    generateForLoop(body, s, F); break;
                     case ASTNodeType::RETURN_STMT: generateReturn(body, s, F); break;
-                    case ASTNodeType::VAR_DECL:    break;
+                    case ASTNodeType::VAR_DECL:    generateVarDeclaration(body, s, F); break;
                     default:
                         std::cout << "  ⚠️ Unhandled ELSE stmt: " << tname(s->type) << "\n";
                         break;
@@ -954,7 +962,7 @@ void WasmCompiler::generateWhileLoop(std::vector<uint8_t>& body,
                 case ASTNodeType::WHILE_LOOP:  generateWhileLoop(body, s, F); break;
                 case ASTNodeType::FOR_LOOP:    generateForLoop(body, s, F); break;
                 case ASTNodeType::RETURN_STMT: generateReturn(body, s, F); break;
-                case ASTNodeType::VAR_DECL:    break;
+                case ASTNodeType::VAR_DECL:    generateVarDeclaration(body, s, F); break;
                 default:
                     std::cout << "  ⚠️ Unhandled WHILE stmt: " << tname(s->type) << "\n";
                     break;
@@ -1051,7 +1059,7 @@ void WasmCompiler::generateForLoop(std::vector<uint8_t>& body,
             case ASTNodeType::WHILE_LOOP:  generateWhileLoop(body, s, F); break;
             case ASTNodeType::FOR_LOOP:    generateForLoop(body, s, F); break;
             case ASTNodeType::RETURN_STMT: generateReturn(body, s, F); break;
-            case ASTNodeType::VAR_DECL:    break;
+            case ASTNodeType::VAR_DECL:    generateVarDeclaration(body, s, F); break;
             default:
                 std::cout << "  ⚠️ Unhandled FOR body stmt: " << tname(s->type) << "\n";
                 break;
@@ -1352,164 +1360,91 @@ void WasmCompiler::emitF64Const(std::vector<uint8_t>& body, double d) {
 }
 
 void WasmCompiler::emitLocalGet(std::vector<uint8_t>& body, const std::string& name) {
-    // Check if it's a global variable first
-    auto globalIt = globalVars.find(name);
-    if (globalIt != globalVars.end()) {
-        // Load from global memory
-        emitI32Const(body, globalIt->second.memoryOffset);
-        if (globalIt->second.type == 0x7c) {
-            body.push_back(0x2c); // f64.load
-            body.push_back(0x02); // 4-byte align (safe for all platforms)
-        } else {
-            body.push_back(0x28); // i32.load
-            body.push_back(0x02); // 4-byte align
-        }
-        body.push_back(0x00); // offset 0 (already included in address)
+    // Locals/parameters shadow any outer scope entities
+    auto localIt = localVarIndices.find(name);
+    if (localIt != localVarIndices.end()) {
+        body.push_back(0x20); // local.get
+        writeUnsignedLeb128(body, static_cast<uint32_t>(localIt->second));
         return;
     }
     
-    // Check if it's a global array
+    // Global scalar variable
+    auto globalIt = globalVars.find(name);
+    if (globalIt != globalVars.end()) {
+        emitI32Const(body, globalIt->second.memoryOffset);
+        if (globalIt->second.type == 0x7c) {
+            body.push_back(0x2c); // f64.load
+            body.push_back(0x02);
+        } else {
+            body.push_back(0x28); // i32.load
+            body.push_back(0x02);
+        }
+        body.push_back(0x00);
+        return;
+    }
+    
+    // Global array/base address
     auto arrayIt = globalArrays.find(name);
     if (arrayIt != globalArrays.end()) {
-        // Return base address of global array
         emitI32Const(body, arrayIt->second.baseOffset);
         return;
     }
     
-    // Check if it's a local variable
-    auto it = localVarIndices.find(name);
-    if (it == localVarIndices.end()) {
-        std::cout << "  ⚠️ Unknown variable get: " << name << " (use 0)\n";
-        emitI32Const(body, 0);
+    std::cout << "  ⚠️ Unknown variable get: " << name << " (use 0)\n";
+    emitI32Const(body, 0);
+}
+
+void WasmCompiler::emitRecordBaseAddress(std::vector<uint8_t>& body, const std::string& name) {
+    auto recordIt = recordVariables.find(name);
+    if (recordIt != recordVariables.end()) {
+        emitI32Const(body, recordIt->second.baseOffset);
         return;
     }
-    body.push_back(0x20);
-    writeUnsignedLeb128(body, static_cast<uint32_t>(it->second));
+    emitLocalGet(body, name);
 }
 
 void WasmCompiler::emitLocalSet(std::vector<uint8_t>& body, const std::string& name) {
-    // Check if it's a global variable first
-    auto globalIt = globalVars.find(name);
-    if (globalIt != globalVars.end()) {
-        // Store to global memory
-        // Stack: [value]
-        // WASM store expects [value, address] on stack (value on top, address below)
-        // When we push address, it goes on TOP: [value] -> push address -> [address, value]
-        // So we need to swap! Use two temp locals to swap:
-        
-        // Use the last two locals (which are reserved temp locals for swapping)
-        // These are always the last 2 locals declared in analyzeLocalVariables
-        // nextLocalIndex is updated in analyzeLocalVariables to include the 2 temp locals
-        // So temp locals are at indices: (nextLocalIndex - 2) and (nextLocalIndex - 1)
-        uint32_t temp1 = static_cast<uint32_t>(nextLocalIndex - 2);  // First temp local
-        uint32_t temp2 = static_cast<uint32_t>(nextLocalIndex - 1);  // Second temp local
-        
-        // Save value to temp1
+    // Locals/params shadow globals
+    auto localIt = localVarIndices.find(name);
+    if (localIt != localVarIndices.end()) {
         body.push_back(0x21); // local.set
-        writeUnsignedLeb128(body, temp1);
-        // Stack: [] (value saved to temp1)
-        
-        // Push address
-        emitI32Const(body, globalIt->second.memoryOffset);
-        // Stack: [address]
-        
-        // Save address to temp2
-        body.push_back(0x21); // local.set
-        writeUnsignedLeb128(body, temp2);
-        // Stack: [] (address saved to temp2)
-        
-        // Get address back first (pushes address on top)
-        body.push_back(0x20); // local.get
-        writeUnsignedLeb128(body, temp2);
-        // Stack: [address]
-        
-        // Get value back (pushes value on top)
-        body.push_back(0x20); // local.get
-        writeUnsignedLeb128(body, temp1);
-        // Stack: [address, value] - wait, that's still wrong!
-        
-        // Actually, we need [value, address] with value on top
-        // So we need to get them in reverse order: value first, then address
-        // But local.get pushes on top, so:
-        // Get address: [address]
-        // Get value: [address, value] (value on top, address below) - WRONG!
-        // We need: [value, address] (value on top, address below)
-        
-        // Correct approach: get value first, then address
-        // Get value: [value]
-        // Get address: [value, address] (address on top) - still wrong!
-        
-        // We need to swap! Let's use a different approach:
-        // Get both values, then swap using another temp or rotate
-        // Actually, WASM has no swap instruction, so we need to use locals
-        
-        // Best approach: get value first, then address, then we have [value, address]
-        // But local.get pushes on top, so we get [address, value] with value on top
-        // Wait, that's backwards. Let me think...
-        // local.get pushes the value on TOP of the stack
-        // So: [] -> local.get temp1 -> [value]
-        //     [value] -> local.get temp2 -> [value, address] (address on top)
-        // We need [value, address] with value on top, so we need [address, value] with address on top!
-        // So we should get address first, then value, giving us [address, value] with value on top
-        // But WASM store expects [value, address] with value on top, so we need to swap
-        
-        // Actually wait - let me check: WASM i32.store consumes [value, address]
-        // where value is the top of the stack. So we need value on top.
-        // If we get value first: [value]
-        // Then get address: [value, address] with address on top - WRONG!
-        // We need value on top!
-        
-        // So we need: get address first, then value
-        // Get address: [address]
-        // Get value: [address, value] with value on top - this is what we want!
-        // But wait, that gives us [address, value] not [value, address]...
-        
-        // Let me re-check WASM spec: i32.store expects [value, address] on stack
-        // where the TOP of the stack is the value to store
-        // So we need: [value, address] with value on top
-        
-        // If we do: local.get temp2 (address) -> [address]
-        // Then: local.get temp1 (value) -> [address, value] (value on top)
-        // This gives us [address, value] with value on top, but we need [value, address]!
-        
-        // Actually, I think the issue is that WASM store consumes BOTH values,
-        // so the order doesn't matter as long as value is on top!
-        // But let me check: i32.store offset align consumes [value, address]
-        // So it pops value first, then address. So we need value on top.
-        
-        // So: [address, value] with value on top should work!
-        // Let's try getting address first, then value
-        body.push_back(0x20); // local.get (get address first)
-        writeUnsignedLeb128(body, temp2);
-        // Stack: [address]
-        
-        body.push_back(0x20); // local.get (get value, pushes on top)
-        writeUnsignedLeb128(body, temp1);
-        // Stack: [address, value] with value on top - this should work for WASM store!
-        
-        if (globalIt->second.type == 0x7c) {
-            body.push_back(0x39); // f64.store (consumes [value, address])
-            body.push_back(0x02); // 4-byte align (safe for all platforms)
-        } else {
-            body.push_back(0x36); // i32.store (consumes [value, address])
-            body.push_back(0x02); // 4-byte align
-        }
-        body.push_back(0x00); // offset 0
+        writeUnsignedLeb128(body, static_cast<uint32_t>(localIt->second));
         return;
     }
     
-    // Check if it's a local variable
-    auto it = localVarIndices.find(name);
-    if (it == localVarIndices.end()) {
-        // Variable doesn't exist (probably removed by optimization)
-        // But the value is already on the stack from generateExpression
-        // Just drop it since we can't store it anywhere
-        std::cout << "  ⚠️ Unknown variable set: " << name << " (dropping value)\n";
-        body.push_back(0x1a); // drop
+    auto globalIt = globalVars.find(name);
+    if (globalIt != globalVars.end()) {
+        uint32_t tempValue = static_cast<uint32_t>(nextLocalIndex - 2);
+        uint32_t tempAddr  = static_cast<uint32_t>(nextLocalIndex - 1);
+        
+        // Save value
+        body.push_back(0x21); // local.set tempValue
+        writeUnsignedLeb128(body, tempValue);
+        
+        // Save address
+        emitI32Const(body, globalIt->second.memoryOffset);
+        body.push_back(0x21); // local.set tempAddr
+        writeUnsignedLeb128(body, tempAddr);
+        
+        // Re-load in order: value (top), address (next)
+        body.push_back(0x20); // local.get tempValue
+        writeUnsignedLeb128(body, tempValue);
+        body.push_back(0x20); // local.get tempAddr
+        writeUnsignedLeb128(body, tempAddr);
+        
+        if (globalIt->second.type == 0x7c) {
+            body.push_back(0x39); // f64.store
+            body.push_back(0x03); // align 8
+        } else {
+            body.push_back(0x36); // i32.store
+            body.push_back(0x02); // align 4
+        }
+        body.push_back(0x00); // offset
         return;
     }
-    body.push_back(0x21);
-    writeUnsignedLeb128(body, static_cast<uint32_t>(it->second));
+    
+    std::cout << "  ⚠️ Unknown variable set: " << name << " (dropping value)\n";
+    body.push_back(0x1a); // drop
 }
 
 
@@ -1660,7 +1595,7 @@ std::tuple<int, uint8_t, int> WasmCompiler::resolveArrayMember(std::vector<uint8
         }
         
         // Calculate address: record_base + field_offset
-        emitLocalGet(body, recordName);     // Base address
+        emitRecordBaseAddress(body, recordName);
         emitI32Const(body, fieldOffset);    // Field offset
         body.push_back(0x6a);               // i32.add
         
@@ -1901,7 +1836,7 @@ void WasmCompiler::generateMemberAccess(std::vector<uint8_t>& body,
         }
         
         // Calculate address: record_base + field_offset
-        emitLocalGet(body, recordName);     // Base address
+        emitRecordBaseAddress(body, recordName);
         emitI32Const(body, fieldOffset);    // Field offset
         body.push_back(0x6a);               // i32.add
         
@@ -2112,7 +2047,7 @@ void WasmCompiler::generateMemberAssignment(std::vector<uint8_t>& body,
         }
         
         // Calculate address: record_base + field_offset
-        emitLocalGet(body, recordName);     // Base address
+        emitRecordBaseAddress(body, recordName);
         emitI32Const(body, fieldOffset);    // Field offset
         body.push_back(0x6a);               // i32.add
         
@@ -2282,7 +2217,7 @@ void WasmCompiler::generateMemberArrayAccess(std::vector<uint8_t>& body,
         }
         
         // Get record base address
-        emitLocalGet(body, recordName);
+        emitRecordBaseAddress(body, recordName);
         
         // Add field offset
         auto recordTypeIt = recordTypes.find(recordIt->second.recordType);

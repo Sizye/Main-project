@@ -1,0 +1,13 @@
+type Person is record
+    var id: integer;
+end;
+
+var employees: Person;
+
+
+routine main(): integer is
+    var locEmp: Person;
+    employees.id := 324;
+
+    return locEmp.id;
+end

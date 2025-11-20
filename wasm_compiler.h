@@ -65,6 +65,7 @@ private:
     };
 
     std::unordered_map<std::string, RecordVarInfo> recordVariables;
+    std::unordered_map<std::string, RecordVarInfo> globalRecordVariables;
 
     struct GlobalVarInfo {
         std::string name;
@@ -107,8 +108,10 @@ private:
                                        std::vector<std::shared_ptr<ASTNode>>& varDecls,
                                        bool insideBody = false);
     std::vector<uint8_t> analyzeLocalVariables(const FuncInfo& F);
-    void generateLocalInitializers(std::vector<uint8_t>& body, const FuncInfo& F);
     bool generateFunctionBody(std::vector<uint8_t>& body, const FuncInfo& F);
+    void generateVarDeclaration(std::vector<uint8_t>& body,
+                                std::shared_ptr<ASTNode> decl,
+                                const FuncInfo& F);
 
     // Statements
     void generateAssignment(std::vector<uint8_t>& body,
@@ -142,6 +145,7 @@ private:
     void emitI32Const(std::vector<uint8_t>& body, int v);
     void emitF64Const(std::vector<uint8_t>& body, double d);
     void emitLocalGet(std::vector<uint8_t>& body, const std::string& name);
+    void emitRecordBaseAddress(std::vector<uint8_t>& body, const std::string& name);
     void emitLocalSet(std::vector<uint8_t>& body, const std::string& name);
     void emitI32Load(std::vector<uint8_t>& body, uint32_t offset);
     void emitI32Store(std::vector<uint8_t>& body, uint32_t offset);

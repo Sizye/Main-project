@@ -146,7 +146,8 @@ wasm-call-nested: $(TARGET)
 	@echo "=== TESTING NESTED CALL ==="
 	@printf 'routine add(a: integer, b: integer): integer is\n' >  test_call2.txt
 	@printf '  return a + b;\n'                                 >> test_call2.txt
-	@printf 'routine devide(a: integer, b: integer): integer is\n' >  test_call2.txt
+	@printf 'end\n'                                             >> test_call2.txt
+	@printf 'routine devide(a: integer, b: integer): integer is\n' >> test_call2.txt
 	@printf '  return a / b;\n'                                 >> test_call2.txt
 	@printf 'end\n'                                             >> test_call2.txt
 	@printf 'routine main(): integer is\n'                      >> test_call2.txt

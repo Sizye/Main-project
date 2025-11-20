@@ -1,3 +1,6 @@
+routine add(a: integer, b: integer): integer is
+  return a + b;
+end
 routine devide(a: integer, b: integer): integer is
   return a / b;
 end
