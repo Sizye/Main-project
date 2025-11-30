@@ -1,0 +1,30 @@
+type Person is record
+    var salary: real;
+    var id: integer;
+    var name: array[50] integer; 
+    var age: integer;
+    var isManager: boolean;
+end;
+
+routine main(): integer is
+    var p1: Person;
+    var p2: Person;
+    var p3: Person;
+    var counter: integer is 0;
+    p1.id := 1;
+    p2.id := 2;
+    p3.id := 3;
+
+    if p1.id = 1 then
+        counter := counter + 1;
+    end
+
+    if p2.id = 2 then
+        counter := counter + 1;
+    end
+
+    if p3.id = 3 then
+        counter := counter + 1;
+    end
+    return counter;
+end

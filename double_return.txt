@@ -1,13 +1,12 @@
-var globalCounter: integer;
-
-routine sideEffectFunction(): integer is
-    globalCounter := globalCounter + 1;
-    print "Side effect executed!";
-    return 100;
+var g: integer is 0;
+routine inc(): integer is
+    g := g + 1;
+    return g;
 end
 
 routine main(): integer is
-    var unused: integer;
-    unused := sideEffectFunction();
-    return globalCounter;
+    var r: integer;
+    r := inc();
+    inc();
+    return g-1000;
 end

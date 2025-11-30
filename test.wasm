@@ -1,6 +1,0 @@
-routine main(): integer is
-    var counter: integer is 1;
-    counter := counter + 1;
-    counter := counter * 3;
-    print(counter);
-end

@@ -11,6 +11,7 @@ lex.yy*
 # Object files
 *.o
 *.obj
+*.wasm
 
 # Build directories
 /build/

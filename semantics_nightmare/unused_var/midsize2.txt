@@ -45,5 +45,5 @@ routine main(): integer is
     initializeCompany();
     var unusedResult: integer;
     unusedResult := 42;
-    return unusedResult;
+    return company.employees[1].id;
 end

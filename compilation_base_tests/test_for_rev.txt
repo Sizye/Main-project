@@ -2,6 +2,7 @@ routine main(): integer is
   var i: integer is 0;
   var s: integer is 0;
   for i in 5 .. 1 reverse loop
+    return i;
     s := s + i;
   end
   return s;
