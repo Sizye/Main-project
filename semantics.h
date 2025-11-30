@@ -1397,8 +1397,20 @@ private:
             else if (child->type == ASTNodeType::ASSIGNMENT) {
                 std::string target = getAssignmentTarget(child);
                 
+                // Check if this assignment modifies a parameter (member/array access on parameters)
+                // These have side effects and must be preserved
+                bool isParamModification = false;
+                if (child->children.size() > 0 && child->children[0]) {
+                    auto lhs = child->children[0];
+                    if (lhs->type == ASTNodeType::MEMBER_ACCESS || lhs->type == ASTNodeType::ARRAY_ACCESS) {
+                        // Member or array access - could be modifying a parameter
+                        isParamModification = true;
+                        std::cout << "💾 PRESERVING assignment to parameter field/array (side effect)" << std::endl;
+                    }
+                }
+                
                 // Check if this assignment should be removed
-                if (!target.empty() && writeOnlyVarsToRemove.find(target) != writeOnlyVarsToRemove.end()) {
+                if (!target.empty() && writeOnlyVarsToRemove.find(target) != writeOnlyVarsToRemove.end() && !isParamModification) {
                     // Check if RHS has side effects
                     bool rhsHasSideEffects = false;
                     if (child->children.size() > 1 && child->children[1]) {
@@ -1424,6 +1436,13 @@ private:
                         removedCount++;
                         continue;
                     }
+                }
+                
+                // If it's a parameter modification, always preserve it
+                if (isParamModification) {
+                    newChildren.push_back(child);
+                    preservedSideEffects++;
+                    continue;
                 }
                 else {
                     // Check if this assignment should be preserved due to side effects
@@ -1682,12 +1701,48 @@ private:
     }
 
 
+    bool isParameterAssignment(std::shared_ptr<ASTNode> assignment) {
+        // Check if this assignment modifies a parameter (which has side effects)
+        if (!assignment || assignment->type != ASTNodeType::ASSIGNMENT) return false;
+        if (assignment->children.empty() || !assignment->children[0]) return false;
+        
+        auto lhs = assignment->children[0];
+        
+        // Check if it's a member access on a parameter
+        if (lhs->type == ASTNodeType::MEMBER_ACCESS) {
+            if (lhs->children.size() > 0 && lhs->children[0]) {
+                auto base = lhs->children[0];
+                if (base->type == ASTNodeType::IDENTIFIER) {
+                    std::string baseName = base->value;
+                    // Check if baseName is a parameter (it will be in outerScopeVariables if it's from outer scope,
+                    // but for parameters we need to check differently - parameters are not in globalVariables
+                    // and modifying them has side effects)
+                    // Actually, parameters are tracked differently - they're not in globalVariables
+                    // and modifying a parameter's field is a side effect
+                    return true; // Member access on any identifier could be a parameter - be conservative
+                }
+            }
+        }
+        
+        // Check if it's an array access on a parameter
+        if (lhs->type == ASTNodeType::ARRAY_ACCESS) {
+            if (lhs->children.size() > 0 && lhs->children[0]) {
+                auto base = lhs->children[0];
+                if (base->type == ASTNodeType::IDENTIFIER) {
+                    return true; // Array access on any identifier could be a parameter
+                }
+            }
+        }
+        
+        return false;
+    }
+
     void optimizeDeadCode(std::shared_ptr<ASTNode> node) {
         // Only remove obviously dead code, preserve everything else
         if (!node) return;
         
         // Only remove assignments to local variables that are truly dead
-        // Never remove anything involving globals
+        // Never remove anything involving globals or parameters
         if (node->type == ASTNodeType::BODY) {
             std::vector<std::shared_ptr<ASTNode>> newChildren;
             for (auto& child : node->children) {
@@ -1696,8 +1751,13 @@ private:
                     std::string target = getAssignmentTarget(child);
                     bool isGlobal = (globalVariables.find(target) != globalVariables.end());
                     
-                    // Only remove if it's local AND truly dead
-                    if (!isGlobal && isDeadAssignment(child)) {
+                    // Never remove assignments that modify parameters (member/array access on parameters)
+                    if (isParameterAssignment(child)) {
+                        std::cout << "💾 PRESERVING assignment to parameter field/array element" << std::endl;
+                        shouldKeep = true;
+                    }
+                    // Only remove if it's local AND truly dead AND not a parameter modification
+                    else if (!isGlobal && isDeadAssignment(child)) {
                         std::cout << "🔥 OPTIMIZATION: Removing dead assignment to local '" 
                                 << target << "'" << std::endl;
                         shouldKeep = false;

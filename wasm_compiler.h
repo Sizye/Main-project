@@ -47,6 +47,9 @@ private:
     std::unordered_map<std::string, int> localVarIndices;
     std::unordered_map<std::string, wasm::Type> localVarTypes;  // Track local variable types
     int nextLocalIndex;
+    
+    // Track if print statements are used
+    bool hasPrintStatements;
 
     // Array variable tracking
     struct ArrayInfo {

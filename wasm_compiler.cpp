@@ -66,8 +66,34 @@ bool WasmCompiler::compile(std::shared_ptr<ASTNode> program,
     // Setup memory
     setupMemory();
     
-    // Add imported print functions
-    addPrintImports();
+    // Track print statement usage - check if any function uses print statements
+    hasPrintStatements = false;
+    for (auto& F : funcs) {
+        std::shared_ptr<ASTNode> bodyNode = nullptr;
+        for (auto& ch : F.node->children) {
+            if (ch && ch->type == ASTNodeType::BODY) { bodyNode = ch; break; }
+        }
+        if (bodyNode) {
+            // Recursively check for print statements in the body
+            std::function<bool(std::shared_ptr<ASTNode>)> checkForPrint = [&](std::shared_ptr<ASTNode> node) -> bool {
+                if (!node) return false;
+                if (node->type == ASTNodeType::PRINT_STMT) return true;
+                for (auto& child : node->children) {
+                    if (checkForPrint(child)) return true;
+                }
+                return false;
+            };
+            if (checkForPrint(bodyNode)) {
+                hasPrintStatements = true;
+                break;
+            }
+        }
+    }
+    
+    // Only add print imports if print statements are actually used
+    if (hasPrintStatements) {
+        addPrintImports();
+    }
 
     // Create all functions
     for (auto& F : funcs) {
@@ -77,10 +103,17 @@ bool WasmCompiler::compile(std::shared_ptr<ASTNode> program,
         auto locals = analyzeLocalVariables(F);
         wasm::Function* func = new wasm::Function();
         func->name = F.name;
-        wasm::Type resultType = F.resultTypes.empty() ? wasm::Type::none : F.resultTypes[0];
+        // Create function signature
         wasm::Signature sig;
         sig.params = F.paramTypes;
-        sig.results = resultType;
+        // For return type: if empty, use none; otherwise use the first result type
+        // Binaryen expects sig.results to be a Type (which can be a tuple for multiple returns)
+        // For a single return, we use the type directly
+        if (F.resultTypes.empty()) {
+            sig.results = wasm::Type::none;
+        } else {
+            sig.results = F.resultTypes[0];
+        }
         func->type = wasm::Type(sig, wasm::NonNullable, wasm::Exact);
         func->vars = locals;
         
@@ -115,12 +148,30 @@ bool WasmCompiler::compile(std::shared_ptr<ASTNode> program,
         if (funcBody) {
             if (!bodyExprs.empty()) {
                 bodyExprs.push_back(funcBody);
-                func->body = builder.makeBlock("", bodyExprs);
+                wasm::Block* outerBlock = builder.makeBlock("", bodyExprs);
+                // If the function body ends with a return, the outer block should have the return type
+                // The return statement provides the value, so the block type is the return type
+                wasm::Type outerBlockType;
+                if (!F.resultTypes.empty()) {
+                    // Function has a return type - outer block should match it
+                    outerBlockType = F.resultTypes[0];
+                } else {
+                    // No return type - outer block is none (void)
+                    outerBlockType = wasm::Type::none;
+                }
+                outerBlock->finalize(outerBlockType);
+                func->body = outerBlock;
             } else {
                 func->body = funcBody;
             }
         } else if (!bodyExprs.empty()) {
-            func->body = builder.makeBlock("", bodyExprs);
+            wasm::Block* outerBlock = builder.makeBlock("", bodyExprs);
+            if (!F.resultTypes.empty()) {
+                outerBlock->finalize(F.resultTypes[0]);
+            } else {
+                outerBlock->finalize(wasm::Type::none);
+            }
+            func->body = outerBlock;
         } else {
             // Default return
             if (!F.resultTypes.empty()) {
@@ -146,7 +197,22 @@ bool WasmCompiler::compile(std::shared_ptr<ASTNode> program,
     // Optimize module
     wasm::PassOptions options;
     wasm::PassRunner passRunner(module.get(), options);
-    passRunner.addDefaultOptimizationPasses();
+    // Add optimization passes - skip the ones that cause validation errors with record returns
+    passRunner.add("merge-blocks");
+    passRunner.add("remove-unused-brs");
+    passRunner.add("remove-unused-names");
+    passRunner.add("vacuum");
+    passRunner.add("reorder-locals");
+    passRunner.add("coalesce-locals");
+    // Skip these as they cause "expected i32 but nothing on stack" validation errors:
+    // - "simplify-locals" - causes validation error when functions return records
+    // - "optimize-instructions" - causes validation error when functions return records
+    // - "code-folding" - causes validation error when functions return records
+    // - "inlining" - might also cause issues
+    // passRunner.add("simplify-locals");
+    // passRunner.add("optimize-instructions");
+    // passRunner.add("code-folding");
+    // passRunner.add("inlining");
     passRunner.run();
     
     // Write to file
@@ -308,7 +374,8 @@ void WasmCompiler::analyzeFunctionSignature(FuncInfo& F) {
         if (!ch) continue;
         if (ch->type == ASTNodeType::PARAMETER_LIST) params = ch;
         else if (ch->type == ASTNodeType::PRIMITIVE_TYPE ||
-                 ch->type == ASTNodeType::USER_TYPE) retType = ch;
+                 ch->type == ASTNodeType::USER_TYPE ||
+                 ch->type == ASTNodeType::ARRAY_TYPE) retType = ch;
     }
 
     if (params) {
@@ -328,9 +395,18 @@ void WasmCompiler::analyzeFunctionSignature(FuncInfo& F) {
     }
 
     if (retType) {
-        F.resultTypes.push_back(mapPrimitiveToWasm(retType->value));
+        if (retType->type == ASTNodeType::USER_TYPE) {
+            // User types (records) are returned as i32 (pointer)
+            F.resultTypes.push_back(wasm::Type::i32);
+        } else if (retType->type == ASTNodeType::ARRAY_TYPE) {
+            // Arrays are returned as i32 (pointer)
+            F.resultTypes.push_back(wasm::Type::i32);
+        } else {
+            F.resultTypes.push_back(mapPrimitiveToWasm(retType->value));
+        }
     } else {
-        F.resultTypes.push_back(wasm::Type::i32);
+        // No return type - function returns void (none)
+        // Don't add any result types
     }
 }
 
@@ -513,6 +589,17 @@ void WasmCompiler::generateVarDeclaration(std::vector<wasm::Expression*>& body,
                                           const FuncInfo& F) {
     if (!decl) return;
     const std::string& name = decl->value;
+    
+    // Check if it's a record variable (stored in memory, local variable holds address)
+    auto recordIt = recordVariables.find(name);
+    if (recordIt != recordVariables.end()) {
+        // Initialize the local variable with the record's memory address
+        wasm::Expression* addr = builder.makeConst(wasm::Literal(recordIt->second.baseOffset));
+        body.push_back(emitLocalSet(name, addr));
+        return;
+    }
+    
+    // Regular variable declaration with initializer
     if (decl->children.size() < 2 || !decl->children[1]) return;
     
     auto initializer = decl->children[1];
@@ -544,28 +631,70 @@ void WasmCompiler::generateVarDeclaration(std::vector<wasm::Expression*>& body,
     body.push_back(emitLocalSet(name, initExpr));
 }
 
+// Helper function to inline record copy blocks
+void inlineRecordCopyBlock(wasm::Expression* expr, std::vector<wasm::Expression*>& bodyExprs) {
+    if (expr->is<wasm::Block>()) {
+        wasm::Block* block = expr->cast<wasm::Block>();
+        if (block->name == "copy_record" || block->name == "__record_copy") {
+            // Inline all expressions from the copy block
+            for (auto* e : block->list) {
+                bodyExprs.push_back(e);
+            }
+            return;
+        }
+    }
+    // Not a copy block, add as is
+    bodyExprs.push_back(expr);
+}
+
 wasm::Expression* WasmCompiler::generateFunctionBody(const FuncInfo& F) {
+    std::cout << "🔧 Generating function body for: " << F.name << std::endl;
     std::shared_ptr<ASTNode> bodyNode = nullptr;
     for (auto& ch : F.node->children) {
         if (ch && ch->type == ASTNodeType::BODY) { bodyNode = ch; break; }
     }
-    if (!bodyNode) return nullptr;
+    if (!bodyNode) {
+        std::cout << "⚠️ No body node found for " << F.name << std::endl;
+        return nullptr;
+    }
 
     std::vector<wasm::Expression*> bodyExprs;
     bool hasReturn = false;
     
+    std::cout << "🔧 Function " << F.name << " has " << bodyNode->children.size() << " body items" << std::endl;
     for (auto& s : bodyNode->children) {
         if (!s) continue;
+        std::cout << "🔧 Processing statement type: " << tname(s->type) << std::endl;
         switch (s->type) {
             case ASTNodeType::VAR_DECL: {
                 std::vector<wasm::Expression*> varBody;
-                generateVarDeclaration(varBody, s, F);
+                const std::string& varName = s->value;
+                auto recordIt = recordVariables.find(varName);
+                if (recordIt != recordVariables.end()) {
+                    // Record variable - initialize local with address (whether or not it has an initializer)
+                    // For records, the "initializer" in the AST is not used - we always initialize with the address
+                    wasm::Expression* addr = builder.makeConst(wasm::Literal(recordIt->second.baseOffset));
+                    varBody.push_back(emitLocalSet(varName, addr));
+                    std::cout << "🔧 Initializing record variable '" << varName 
+                              << "' with address " << recordIt->second.baseOffset << std::endl;
+                } else {
+                    generateVarDeclaration(varBody, s, F);
+                }
                 bodyExprs.insert(bodyExprs.end(), varBody.begin(), varBody.end());
                 break;
             }
-            case ASTNodeType::ASSIGNMENT:
-                bodyExprs.push_back(generateAssignment(s, F));
+            case ASTNodeType::ASSIGNMENT: {
+                wasm::Expression* assignExpr = generateAssignment(s, F);
+                // Use helper to inline record copy blocks
+                // Record copy blocks should have type none (they're just side effects)
+                if (assignExpr->type == wasm::Type::none || assignExpr->type == wasm::Type::unreachable) {
+                    inlineRecordCopyBlock(assignExpr, bodyExprs);
+                } else {
+                    // Assignment returned a value - drop it (we only care about side effects)
+                    inlineRecordCopyBlock(builder.makeDrop(assignExpr), bodyExprs);
+                }
                 break;
+            }
             case ASTNodeType::IF_STMT:
                 bodyExprs.push_back(generateIfStatement(s, F));
                 break;
@@ -613,11 +742,28 @@ wasm::Expression* WasmCompiler::generateFunctionBody(const FuncInfo& F) {
         return nullptr;
     }
     
-    if (bodyExprs.size() == 1) {
-        return bodyExprs[0];
+    // Create a block for the function body
+    // If the last statement is a return, the block type should be unreachable
+    // Otherwise, the block type should match the function return type
+    wasm::Type blockType;
+    if (hasReturn) {
+        // Block ends with return - the block itself should have the return type
+        // not unreachable, because the return statement provides the value
+        if (!F.resultTypes.empty()) {
+            blockType = F.resultTypes[0];
+        } else {
+            blockType = wasm::Type::unreachable;
+        }
+    } else if (!F.resultTypes.empty()) {
+        // Function falls through - block type matches return type
+        blockType = F.resultTypes[0];
+    } else {
+        // No return type - block is none (void)
+        blockType = wasm::Type::none;
     }
-    
-    return builder.makeBlock("", bodyExprs);
+    wasm::Block* bodyBlock = builder.makeBlock("", bodyExprs);
+    bodyBlock->finalize(blockType);
+    return bodyBlock;
 }
 
 // ======================================================================
@@ -631,6 +777,9 @@ wasm::Expression* WasmCompiler::generateAssignment(std::shared_ptr<ASTNode> a,
     auto rhs = a->children[1];
     if (!lhs || !rhs) return builder.makeNop();
     
+    std::cout << "🔧 generateAssignment: lhs type=" << tname(lhs->type) 
+              << ", rhs type=" << tname(rhs->type) << std::endl;
+    
     ValueType targetType = getExpressionType(lhs, F);
     ValueType sourceType = getExpressionType(rhs, F);
     
@@ -640,6 +789,14 @@ wasm::Expression* WasmCompiler::generateAssignment(std::shared_ptr<ASTNode> a,
     }
     
     wasm::Expression* rhsExpr = generateExpression(rhs, F);
+    
+    // Ensure rhsExpr is properly finalized if it's a function call
+    if (rhs->type == ASTNodeType::ROUTINE_CALL) {
+        if (rhsExpr) {
+            // Finalize the call to ensure it's properly typed
+            rhsExpr->finalize();
+        }
+    }
     
     // Check if we're assigning a record return value to a record variable
     if (lhs->type == ASTNodeType::IDENTIFIER) {
@@ -660,16 +817,51 @@ wasm::Expression* WasmCompiler::generateAssignment(std::shared_ptr<ASTNode> a,
                         int recordSize = recordTypeIt->second.totalSize;
                         
                         // Get source address (function return value - pointer to record)
-                        wasm::Expression* srcAddr = rhsExpr;
+                        // The function call returns i32, which we use as the source address
+                        // We need to store it in a temp local to avoid stack issues when using it multiple times
+                        // The temp locals are the last 2 locals added in analyzeLocalVariables
+                        // Calculate: temp local index = num params + num regular locals
+                        // Since nextLocalIndex = num params + num regular locals + 2, we use nextLocalIndex - 2
+                        wasm::Index tempLocalIndex = nextLocalIndex - 2;
+                        
+                        // Debug: verify the calculation
+                        std::cout << "  🔧 Using temp local index " << tempLocalIndex 
+                                  << " (nextLocalIndex=" << nextLocalIndex 
+                                  << ", num params=" << F.paramTypes.size() << ")" << std::endl;
+                        
+                        // Store the function call result in the temp local
+                        // This ensures the function is called once and its result is reused
+                        // Make sure rhsExpr (the function call) is properly finalized and returns i32
+                        if (!rhsExpr || rhsExpr->type != wasm::Type::i32) {
+                            std::cout << "  ❌ Error: Function call result is not i32! Type: " 
+                                      << (rhsExpr ? rhsExpr->type : wasm::Type::none) << std::endl;
+                            return builder.makeNop();
+                        }
                         
                         // Get destination address (local record variable)
-                        wasm::Expression* dstAddr = emitRecordBaseAddress(lhsName);
+                        // For local record variables, the local variable holds the address
+                        // We need to use the local variable value (which is the address), not the constant base offset
+                        wasm::Expression* dstAddr;
+                        auto localIt = localVarIndices.find(lhsName);
+                        auto recordIt2 = recordVariables.find(lhsName);
+                        if (localIt != localVarIndices.end() && recordIt2 != recordVariables.end()) {
+                            // It's a local record variable - get address from local variable
+                            dstAddr = builder.makeLocalGet(localIt->second, wasm::Type::i32);
+                        } else {
+                            dstAddr = emitRecordBaseAddress(lhsName);
+                        }
                         
                         // Copy record byte by byte (or in chunks)
+                        // Store the function call result in a temp local first to ensure it's properly evaluated
                         std::vector<wasm::Expression*> copyExprs;
+                        // Store the function call result in temp local - this ensures it's evaluated once
+                        wasm::Expression* storeSrc = builder.makeLocalSet(tempLocalIndex, rhsExpr);
+                        copyExprs.push_back(storeSrc);
+                        wasm::Expression* srcAddr = builder.makeLocalGet(tempLocalIndex, wasm::Type::i32);
                         // Copy in 4-byte chunks
                         for (int offset = 0; offset < recordSize; offset += 4) {
                             int bytesToCopy = std::min(4, recordSize - offset);
+                            // Use the stored local value
                             wasm::Expression* srcOffset = builder.makeBinary(
                                 wasm::AddInt32, srcAddr, builder.makeConst(wasm::Literal(offset))
                             );
@@ -691,10 +883,22 @@ wasm::Expression* WasmCompiler::generateAssignment(std::shared_ptr<ASTNode> a,
                         
                         if (copyExprs.empty()) {
                             return builder.makeNop();
-                        } else if (copyExprs.size() == 1) {
-                            return copyExprs[0];
                         } else {
-                            return builder.makeBlock("", copyExprs);
+                            // Instead of creating a block, return the first expression
+                            // and mark that we need to inline the rest
+                            // This avoids Binaryen optimizer issues with nested blocks
+                            // We'll handle the inlining in generateFunctionBody
+                            // Ensure the copy block is properly finalized with type none
+                            // This is a side-effect-only block (copying memory)
+                            wasm::Block* copyBlock = builder.makeBlock("copy_record", copyExprs);
+                            copyBlock->finalize(wasm::Type::none);
+                            // Make sure all expressions in the block are properly finalized
+                            for (auto* expr : copyBlock->list) {
+                                if (expr && expr->type == wasm::Type::none) {
+                                    expr->finalize();
+                                }
+                            }
+                            return copyBlock;
                         }
                     }
                 }
@@ -801,19 +1005,84 @@ wasm::Expression* WasmCompiler::generateAssignment(std::shared_ptr<ASTNode> a,
         // Now call generateArrayAssignment with the converted RHS
         return generateArrayAssignment(lhs, rhsExpr, F);
     } else if (lhs->type == ASTNodeType::MEMBER_ACCESS) {
-        wasm::Expression* addrExpr = generateMemberAssignment(lhs, nullptr, F);
-        wasm::Type fieldType = wasm::Type::i32;
+        // Member assignment: record.field := value or array[index].field := value
+        wasm::Expression* rhsExpr = generateExpression(rhs, F);
+        ValueType sourceType = getExpressionType(rhs, F);
+        
+        // Get the target field type
+        ValueType targetType = ValueType::INTEGER; // default
         auto base = lhs->children[0];
         std::string fieldName = lhs->value;
-        if (base->type == ASTNodeType::IDENTIFIER) {
-            auto recordIt = recordVariables.find(base->value);
+        
+        if (base && base->type == ASTNodeType::IDENTIFIER) {
+            std::string recordName = base->value;
+            auto recordIt = recordVariables.find(recordName);
+            std::string recordTypeName;
+            
             if (recordIt != recordVariables.end()) {
-                auto recordTypeIt = recordTypes.find(recordIt->second.recordType);
+                recordTypeName = recordIt->second.recordType;
+            } else {
+                // Check if it's a parameter
+                auto localIt = localVarIndices.find(recordName);
+                if (localIt != localVarIndices.end()) {
+                    // Find the parameter type
+                    std::shared_ptr<ASTNode> params = nullptr;
+                    for (auto& ch : F.node->children) {
+                        if (ch && ch->type == ASTNodeType::PARAMETER_LIST) { params = ch; break; }
+                    }
+                    if (params) {
+                        for (auto& p : params->children) {
+                            if (p && p->type == ASTNodeType::PARAMETER && p->value == recordName) {
+                                for (auto& pc : p->children) {
+                                    if (pc && pc->type == ASTNodeType::USER_TYPE) {
+                                        recordTypeName = pc->value;
+                                        break;
+                                    }
+                                }
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+            
+            if (!recordTypeName.empty()) {
+                auto recordTypeIt = recordTypes.find(recordTypeName);
                 if (recordTypeIt != recordTypes.end()) {
                     for (const auto& field : recordTypeIt->second.fields) {
                         if (field.first == fieldName) {
-                            fieldType = field.second.first;
+                            wasm::Type fieldWasmType = field.second.first;
+                            if (fieldWasmType == wasm::Type::f64) {
+                                targetType = ValueType::REAL;
+                            } else if (fieldWasmType == wasm::Type::i32) {
+                                // Could be integer or boolean - check field name or use context
+                                targetType = ValueType::INTEGER;
+                            }
                             break;
+                        }
+                    }
+                }
+            }
+        } else if (base && base->type == ASTNodeType::ARRAY_ACCESS) {
+            // Handle array[index].field := value
+            // Similar logic but for array elements
+            if (base->children.size() >= 1 && base->children[0]) {
+                std::string arrayName = base->children[0]->value;
+                auto arrayIt = arrayInfos.find(arrayName);
+                if (arrayIt != arrayInfos.end() && arrayIt->second.elemTypeName != "") {
+                    // Array of records - find the field type
+                    auto recordTypeIt = recordTypes.find(arrayIt->second.elemTypeName);
+                    if (recordTypeIt != recordTypes.end()) {
+                        for (const auto& field : recordTypeIt->second.fields) {
+                            if (field.first == fieldName) {
+                                wasm::Type fieldWasmType = field.second.first;
+                                if (fieldWasmType == wasm::Type::f64) {
+                                    targetType = ValueType::REAL;
+                                } else {
+                                    targetType = ValueType::INTEGER;
+                                }
+                                break;
+                            }
                         }
                     }
                 }
@@ -821,17 +1090,11 @@ wasm::Expression* WasmCompiler::generateAssignment(std::shared_ptr<ASTNode> a,
         }
         
         // Convert RHS to match field type
-        ValueType sourceType = getExpressionType(rhs, F);
-        ValueType targetType = (fieldType == wasm::Type::f64) ? ValueType::REAL : ValueType::INTEGER;
         if (sourceType != targetType) {
             rhsExpr = emitTypeConversion(rhsExpr, sourceType, targetType);
         }
         
-        if (fieldType == wasm::Type::f64) {
-            return builder.makeStore(8, 0, 0, addrExpr, rhsExpr, wasm::Type::f64, wasm::Name("memory"));
-        } else {
-            return builder.makeStore(4, 0, 0, addrExpr, rhsExpr, wasm::Type::i32, wasm::Name("memory"));
-        }
+        return generateMemberAssignment(lhs, rhsExpr, F);
     } else {
         std::cout << "⚠️ Only simple identifier, array, and member assignments supported\n";
         return builder.makeDrop(rhsExpr);
@@ -1076,32 +1339,71 @@ wasm::Expression* WasmCompiler::generateReturn(std::shared_ptr<ASTNode> r,
     if (!F.resultTypes.empty()) {
         wasm::Type expectedWasmType = F.resultTypes[0];
         ValueType expectedType = ValueType::INTEGER;
+        bool isRecordOrArrayReturn = false;
+        
         if (expectedWasmType == wasm::Type::f64) {
             expectedType = ValueType::REAL;
         } else {
             std::shared_ptr<ASTNode> retType = nullptr;
             for (auto& ch : F.node->children) {
                 if (ch && (ch->type == ASTNodeType::PRIMITIVE_TYPE || 
-                           ch->type == ASTNodeType::USER_TYPE)) {
+                           ch->type == ASTNodeType::USER_TYPE ||
+                           ch->type == ASTNodeType::ARRAY_TYPE)) {
                     retType = ch;
                     break;
                 }
             }
-            if (retType && retType->type == ASTNodeType::PRIMITIVE_TYPE) {
-                if (retType->value == "boolean") expectedType = ValueType::BOOLEAN;
-                else expectedType = ValueType::INTEGER;
+            if (retType) {
+                if (retType->type == ASTNodeType::USER_TYPE) {
+                    // Returning a record - return its address (i32 pointer)
+                    isRecordOrArrayReturn = true;
+                } else if (retType->type == ASTNodeType::ARRAY_TYPE) {
+                    // Returning an array - return its address (i32 pointer)
+                    isRecordOrArrayReturn = true;
+                } else if (retType->type == ASTNodeType::PRIMITIVE_TYPE) {
+                    if (retType->value == "boolean") expectedType = ValueType::BOOLEAN;
+                    else expectedType = ValueType::INTEGER;
+                }
             }
         }
         
         if (!r->children.empty() && r->children[0]) {
             auto returnExpr = r->children[0];
-            ValueType actualType = getExpressionType(returnExpr, F);
-            wasm::Expression* retExpr = generateExpression(returnExpr, F);
-            if (actualType != expectedType) {
-                retExpr = emitTypeConversion(retExpr, actualType, expectedType);
+            
+            if (isRecordOrArrayReturn) {
+                // For record/array returns, we need to return the address (i32)
+                // If it's an identifier, use emitLocalGet which now handles records/arrays
+                wasm::Expression* retExpr = generateExpression(returnExpr, F);
+                // Ensure the return expression is explicitly i32 type
+                // generateExpression should return i32 for records/arrays via emitLocalGet
+                // The optimizer needs to see this as a single i32 value
+                // Make sure the expression is finalized before creating the return
+                if (retExpr->type == wasm::Type::none) {
+                    // Expression hasn't been finalized - this shouldn't happen but be safe
+                    retExpr->finalize();
+                }
+                // The return statement must return a single i32 value
+                // Verify the return expression is i32
+                if (retExpr->type != wasm::Type::i32) {
+                    std::cout << "  ⚠️ Warning: Return expression type is " << retExpr->type 
+                              << ", expected i32. Finalizing..." << std::endl;
+                    retExpr->finalize();
+                }
+                wasm::Return* ret = builder.makeReturn(retExpr);
+                // Finalize the return statement to ensure it's properly typed
+                ret->finalize();
+                std::cout << "  ✅ Return statement generated with type " << retExpr->type << std::endl;
+                return ret;
+            } else {
+                ValueType actualType = getExpressionType(returnExpr, F);
+                wasm::Expression* retExpr = generateExpression(returnExpr, F);
+                if (actualType != expectedType) {
+                    retExpr = emitTypeConversion(retExpr, actualType, expectedType);
+                }
+                return builder.makeReturn(retExpr);
             }
-            return builder.makeReturn(retExpr);
         } else {
+            // No return expression provided but function expects a return value
             if (expectedType == ValueType::REAL) {
                 return builder.makeReturn(emitF64Const(0.0));
             } else {
@@ -1109,6 +1411,7 @@ wasm::Expression* WasmCompiler::generateReturn(std::shared_ptr<ASTNode> r,
             }
         }
     }
+    // Function has no return type - return void
     return builder.makeReturn();
 }
 
@@ -1333,7 +1636,24 @@ wasm::Expression* WasmCompiler::generateCall(std::shared_ptr<ASTNode> call,
             returnType = calledFunc.resultTypes[0];
         }
     }
-    return builder.makeCall(call->value, args, returnType);
+    
+    // If function has no return type, use none
+    if (returnType == wasm::Type::none) {
+        return builder.makeCall(call->value, args, wasm::Type::none);
+    } else {
+        // Ensure the call returns a single value of the correct type
+        wasm::Call* callExpr = builder.makeCall(call->value, args, returnType);
+        // Finalize the call to ensure it's properly typed
+        callExpr->finalize();
+        // Verify the call returns the expected type
+        if (callExpr->type != returnType) {
+            std::cout << "  ⚠️ Warning: Function call type is " << callExpr->type 
+                      << ", expected " << returnType << std::endl;
+        }
+        std::cout << "  ✅ Function call generated: " << call->value 
+                  << " returns " << returnType << std::endl;
+        return callExpr;
+    }
 }
 
 // ======================================================================
@@ -1349,6 +1669,21 @@ wasm::Expression* WasmCompiler::emitF64Const(double d) {
 }
 
 wasm::Expression* WasmCompiler::emitLocalGet(const std::string& name) {
+    // Check for record variables first (before checking localVarIndices)
+    // Record variables are stored in memory, and the local variable holds the address
+    auto recordIt = recordVariables.find(name);
+    if (recordIt != recordVariables.end()) {
+        // Check if it's also in localVarIndices (local record variable)
+        auto localIt = localVarIndices.find(name);
+        if (localIt != localVarIndices.end()) {
+            // It's a local record variable - the local holds the address
+            return builder.makeLocalGet(localIt->second, wasm::Type::i32);
+        } else {
+            // It's a global record variable - return the constant address
+            return emitRecordBaseAddress(name);
+        }
+    }
+    
     auto localIt = localVarIndices.find(name);
     if (localIt != localVarIndices.end()) {
         // Get the actual type of the local variable
@@ -2187,9 +2522,12 @@ wasm::Expression* WasmCompiler::generateMemberAssignment(std::shared_ptr<ASTNode
         return builder.makeNop();
     }
     
-    wasm::Type fieldType = wasm::Type::i32;
     auto base = memberAccess->children[0];
     std::string fieldName = memberAccess->value;
+    std::cout << "🔧 generateMemberAssignment called: field='" << fieldName 
+              << "', base type=" << (base ? tname(base->type) : "null") << std::endl;
+    
+    wasm::Type fieldType = wasm::Type::i32;
     
     if (base->type == ASTNodeType::IDENTIFIER) {
         std::string recordName = base->value;
@@ -2204,6 +2542,9 @@ wasm::Expression* WasmCompiler::generateMemberAssignment(std::shared_ptr<ASTNode
             if (localIt != localVarIndices.end()) {
                 // It's a local variable - check if it's a record type parameter
                 auto typeIt = localVarTypes.find(recordName);
+                std::cout << "🔍 Checking if '" << recordName << "' is a parameter: "
+                          << "in localVarIndices=" << (localIt != localVarIndices.end())
+                          << ", hasType=" << (typeIt != localVarTypes.end()) << std::endl;
                 if (typeIt != localVarTypes.end() && typeIt->second == wasm::Type::i32) {
                     // Could be a record parameter - need to find the record type from parameter list
                     std::shared_ptr<ASTNode> params = nullptr;
@@ -2218,6 +2559,8 @@ wasm::Expression* WasmCompiler::generateMemberAssignment(std::shared_ptr<ASTNode
                                     if (pc && pc->type == ASTNodeType::USER_TYPE) {
                                         recordTypeName = pc->value;
                                         isParameter = true;
+                                        std::cout << "✅ Found record parameter '" << recordName 
+                                                  << "' with type '" << recordTypeName << "'" << std::endl;
                                         break;
                                     }
                                 }
@@ -2261,8 +2604,14 @@ wasm::Expression* WasmCompiler::generateMemberAssignment(std::shared_ptr<ASTNode
         if (isParameter) {
             // Parameter is passed as i32 pointer - get it from local variable
             recordBase = emitLocalGet(recordName);
+            std::cout << "🔧 Member assignment: parameter '" << recordName 
+                      << "' (record type: " << recordTypeName 
+                      << ", field: " << fieldName << ", offset: " << fieldOffset << ")" << std::endl;
         } else {
             recordBase = emitRecordBaseAddress(recordName);
+            std::cout << "🔧 Member assignment: record variable '" << recordName 
+                      << "' (record type: " << recordTypeName 
+                      << ", field: " << fieldName << ", offset: " << fieldOffset << ")" << std::endl;
         }
         
         wasm::Expression* addr = builder.makeBinary(
@@ -2272,6 +2621,7 @@ wasm::Expression* WasmCompiler::generateMemberAssignment(std::shared_ptr<ASTNode
         );
         
         if (rhs) {
+            // The RHS expression should already be the correct type from generateAssignment
             if (fieldType == wasm::Type::f64) {
                 return builder.makeStore(8, 0, 0, addr, rhs, wasm::Type::f64, wasm::Name("memory"));
         } else {
