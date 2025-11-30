@@ -9,6 +9,12 @@
 #include <vector>
 #include <memory>
 
+// Binaryen includes
+#include <wasm.h>
+#include <wasm-builder.h>
+#include <wasm-io.h>
+#include <pass.h>
+
 // Type system for type checking and conversion
 enum class ValueType {
     INTEGER,
@@ -21,12 +27,16 @@ class WasmCompiler {
 private:
     struct FuncInfo {
         std::string name;
-        std::vector<uint8_t> paramTypes;   // wasm value types
-        std::vector<uint8_t> resultTypes;  // 0 or 1
-        std::shared_ptr<ASTNode> node;     // ROUTINE_DECL
-        uint32_t typeIndex;                // index in type section
-        uint32_t funcIndex;                // index in function index space
+        std::vector<wasm::Type> paramTypes;   // Binaryen types
+        std::vector<wasm::Type> resultTypes;  // Binaryen types
+        std::shared_ptr<ASTNode> node;       // ROUTINE_DECL
+        uint32_t typeIndex;                  // index in type section
+        uint32_t funcIndex;                  // index in function index space
     };
+
+    // Binaryen module
+    std::unique_ptr<wasm::Module> module;
+    wasm::Builder builder;
 
     // All functions in program (helpers + main)
     std::vector<FuncInfo> funcs;
@@ -34,12 +44,13 @@ private:
     std::unordered_map<std::string, uint32_t> funcIndexByName;
 
     // Per-function locals: name -> local index
-    std::unordered_map<std::string,int> localVarIndices;
+    std::unordered_map<std::string, int> localVarIndices;
+    std::unordered_map<std::string, wasm::Type> localVarTypes;  // Track local variable types
     int nextLocalIndex;
 
-    // Array variable tracking (add to private members)
+    // Array variable tracking
     struct ArrayInfo {
-        uint8_t elemType;           // WASM type (0x7f for i32, 0x7c for f64)
+        wasm::Type elemType;        // Binaryen type
         std::string elemTypeName;   // Original type name ("integer", "real", "Person")
         int size;
         int baseOffset;
@@ -50,7 +61,7 @@ private:
 
     struct RecordInfo {
         std::string name;
-        std::vector<std::pair<std::string, std::pair<uint8_t, int>>> fields;
+        std::vector<std::pair<std::string, std::pair<wasm::Type, int>>> fields;
         // field_name -> (type, offset_in_bytes)
         std::unordered_map<std::string, std::string> arrayFieldElementTypes;
         // field_name -> element_type_name (for array fields only)
@@ -58,7 +69,9 @@ private:
     };
 
     std::unordered_map<std::string, RecordInfo> recordTypes;
-        struct RecordVarInfo {
+    // Type definitions (for type aliases like "type myId is real")
+    std::unordered_map<std::string, std::shared_ptr<ASTNode>> typeDefinitions;
+    struct RecordVarInfo {
         std::string recordType;
         int baseOffset; // In linear memory
         int size;
@@ -69,15 +82,16 @@ private:
 
     struct GlobalVarInfo {
         std::string name;
-        uint8_t type;
+        wasm::Type type;
         int memoryOffset;  // Offset in linear memory
         int size;          // Size in bytes
         std::shared_ptr<ASTNode> initializer;  // Initializer expression (if any)
     };
     std::unordered_map<std::string, GlobalVarInfo> globalVars;
     std::unordered_map<std::string, ArrayInfo> globalArrays;  // Global arrays
+
 public:
-    WasmCompiler() : nextLocalIndex(0), globalMemoryOffset(0) {}
+    WasmCompiler() : module(std::make_unique<wasm::Module>()), builder(*module), nextLocalIndex(0), globalMemoryOffset(0) {}
 
     // Compile full AST into a single-module WASM file exporting `main`
     bool compile(std::shared_ptr<ASTNode> program, const std::string& filename);
@@ -88,122 +102,106 @@ private:
 
     // Signature inference
     void analyzeFunctionSignature(FuncInfo& F);
-    uint8_t mapPrimitiveToWasm(const std::string& tname);
+    wasm::Type mapPrimitiveToWasm(const std::string& tname);
 
-    // Wasm writers
-    void writeUnsignedLeb128(std::vector<uint8_t>& buf, uint32_t value);
-    void writeString(std::vector<uint8_t>& buf, const std::string& s);
-    void writeSignedLeb128(std::vector<uint8_t>& buf, int32_t v);
-
-    // Sections for all functions
-    std::vector<uint8_t> buildTypeSection();
-    std::vector<uint8_t> buildFunctionSection();
-    std::vector<uint8_t> buildExportSection();
-    std::vector<uint8_t> buildCodeSection();
-
-    // Per-function codegen (called from buildCodeSection)
+    // Per-function codegen
     void resetLocals();
     void addParametersToLocals(const FuncInfo& F);
     void collectAllVariableDeclarations(std::shared_ptr<ASTNode> node,
                                        std::vector<std::shared_ptr<ASTNode>>& varDecls,
                                        bool insideBody = false);
-    std::vector<uint8_t> analyzeLocalVariables(const FuncInfo& F);
-    bool generateFunctionBody(std::vector<uint8_t>& body, const FuncInfo& F);
-    void generateVarDeclaration(std::vector<uint8_t>& body,
+    std::vector<wasm::Type> analyzeLocalVariables(const FuncInfo& F);
+    
+    // Helper to resolve type alias (e.g., "myId" -> "real")
+    std::shared_ptr<ASTNode> resolveTypeAlias(const std::string& typeName) const;
+    
+    wasm::Expression* generateFunctionBody(const FuncInfo& F);
+    void generateVarDeclaration(std::vector<wasm::Expression*>& body,
                                 std::shared_ptr<ASTNode> decl,
                                 const FuncInfo& F);
 
     // Statements
-    void generateAssignment(std::vector<uint8_t>& body,
-                            std::shared_ptr<ASTNode> assignment,
-                            const FuncInfo& F);
-    void generateIfStatement(std::vector<uint8_t>& body,
-                             std::shared_ptr<ASTNode> ifStmt,
-                             const FuncInfo& F);
-    void generateWhileLoop(std::vector<uint8_t>& body,
-                           std::shared_ptr<ASTNode> whileStmt,
-                           const FuncInfo& F);
-    void generateForLoop(std::vector<uint8_t>& body,
-                         std::shared_ptr<ASTNode> forNode,
-                         const FuncInfo& F);
-    void generateReturn(std::vector<uint8_t>& body,
-                        std::shared_ptr<ASTNode> returnStmt,
-                        const FuncInfo& F);
+    wasm::Expression* generateAssignment(std::shared_ptr<ASTNode> assignment,
+                                       const FuncInfo& F);
+    wasm::Expression* generateIfStatement(std::shared_ptr<ASTNode> ifStmt,
+                                          const FuncInfo& F);
+    wasm::Expression* generateWhileLoop(std::shared_ptr<ASTNode> whileStmt,
+                                       const FuncInfo& F);
+    wasm::Expression* generateForLoop(std::shared_ptr<ASTNode> forNode,
+                                     const FuncInfo& F);
+    wasm::Expression* generateReturn(std::shared_ptr<ASTNode> returnStmt,
+                                    const FuncInfo& F);
 
     // Expressions
-    void generateExpression(std::vector<uint8_t>& body,
-                            std::shared_ptr<ASTNode> expr,
-                            const FuncInfo& F);
-    void generateBinaryOp(std::vector<uint8_t>& body,
-                          std::shared_ptr<ASTNode> bin,
-                          const FuncInfo& F);
-    void generateCall(std::vector<uint8_t>& body,
-                      std::shared_ptr<ASTNode> call,
-                      const FuncInfo& F);
+    wasm::Expression* generateExpression(std::shared_ptr<ASTNode> expr,
+                                        const FuncInfo& F);
+    wasm::Expression* generateBinaryOp(std::shared_ptr<ASTNode> bin,
+                                      const FuncInfo& F);
+    wasm::Expression* generateCall(std::shared_ptr<ASTNode> call,
+                                  const FuncInfo& F);
 
     // Small emitters
-    void emitI32Const(std::vector<uint8_t>& body, int v);
-    void emitF64Const(std::vector<uint8_t>& body, double d);
-    void emitLocalGet(std::vector<uint8_t>& body, const std::string& name);
-    void emitRecordBaseAddress(std::vector<uint8_t>& body, const std::string& name);
-    void emitLocalSet(std::vector<uint8_t>& body, const std::string& name);
-    void emitI32Load(std::vector<uint8_t>& body, uint32_t offset);
-    void emitI32Store(std::vector<uint8_t>& body, uint32_t offset);
-    void emitF64Load(std::vector<uint8_t>& body, uint32_t offset);
-    void emitF64Store(std::vector<uint8_t>& body, uint32_t offset);
-    std::vector<uint8_t> buildMemorySection();
+    wasm::Expression* emitI32Const(int v);
+    wasm::Expression* emitF64Const(double d);
+    wasm::Expression* emitLocalGet(const std::string& name);
+    wasm::Expression* emitRecordBaseAddress(const std::string& name);
+    wasm::Expression* emitLocalSet(const std::string& name, wasm::Expression* value);
+    wasm::Expression* emitI32Load(uint32_t offset);
+    wasm::Expression* emitI32Store(uint32_t offset, wasm::Expression* value);
+    wasm::Expression* emitF64Load(uint32_t offset);
+    wasm::Expression* emitF64Store(uint32_t offset, wasm::Expression* value);
+    
+    // Memory section setup
+    void setupMemory();
 
     // For array type handling
-    uint8_t getArrayType(std::shared_ptr<ASTNode> arrayTypeNode);
-    std::tuple<uint8_t, std::string, int> analyzeArrayType(std::shared_ptr<ASTNode> arrayTypeNode);
+    wasm::Type getArrayType(std::shared_ptr<ASTNode> arrayTypeNode);
+    std::tuple<wasm::Type, std::string, int> analyzeArrayType(std::shared_ptr<ASTNode> arrayTypeNode);
     
     // Array and member access generation
-    void generateArrayAccess(std::vector<uint8_t>& body,
-                             std::shared_ptr<ASTNode> arrayAccess,
-                             const FuncInfo& F);
-    void generateMemberAccess(std::vector<uint8_t>& body,
-                              std::shared_ptr<ASTNode> memberAccess,
-                              const FuncInfo& F);
-    void generateArrayAssignment(std::vector<uint8_t>& body,
-                                 std::shared_ptr<ASTNode> arrayAccess,
-                                 std::shared_ptr<ASTNode> rhs,
-                                 const FuncInfo& F);
-    std::tuple<int, uint8_t, int> resolveArrayMember(std::vector<uint8_t>& body,
-                                                               std::shared_ptr<ASTNode> memberAccess,
-                                                               const FuncInfo& F);
-    void generateArrayAccessForRecord(std::vector<uint8_t>& body,
-                                                std::shared_ptr<ASTNode> arrayAccess,
+    wasm::Expression* generateArrayAccess(std::shared_ptr<ASTNode> arrayAccess,
+                                         const FuncInfo& F);
+    wasm::Expression* generateMemberAccess(std::shared_ptr<ASTNode> memberAccess,
+                                          const FuncInfo& F);
+    wasm::Expression* generateArrayAssignment(std::shared_ptr<ASTNode> arrayAccess,
+                                             wasm::Expression* rhs,
+                                             const FuncInfo& F);
+    std::tuple<int, wasm::Type, int> resolveArrayMember(std::shared_ptr<ASTNode> memberAccess,
+                                                       const FuncInfo& F);
+    wasm::Expression* generateArrayAccessForRecord(std::shared_ptr<ASTNode> arrayAccess,
+                                                  const FuncInfo& F);
+    std::tuple<int, wasm::Type, int> resolveArrayAccessMember(std::shared_ptr<ASTNode> arrayAccess,
+                                                              const std::string& fieldName,
+                                                              const FuncInfo& F);
+    wasm::Expression* generateSimpleArrayAccess(std::shared_ptr<ASTNode> arrayRef,
+                                                std::shared_ptr<ASTNode> indexExpr,
                                                 const FuncInfo& F);
-    std::tuple<int, uint8_t, int> resolveArrayAccessMember(std::vector<uint8_t>& body,
-                                                          std::shared_ptr<ASTNode> arrayAccess,
-                                                          const std::string& fieldName,
-                                                          const FuncInfo& F);
-    void generateSimpleArrayAccess(std::vector<uint8_t>& body,
-                                   std::shared_ptr<ASTNode> arrayRef,
-                                   std::shared_ptr<ASTNode> indexExpr,
-                                   const FuncInfo& F);
     
-    void generateMemberArrayAccess(std::vector<uint8_t>& body,
-                                   std::shared_ptr<ASTNode> memberAccess,
-                                   std::shared_ptr<ASTNode> indexExpr,
-                                   const FuncInfo& F);
+    wasm::Expression* generateMemberArrayAccess(std::shared_ptr<ASTNode> memberAccess,
+                                                std::shared_ptr<ASTNode> indexExpr,
+                                                const FuncInfo& F);
+    
     // Records
     void collectRecordTypes(std::shared_ptr<ASTNode> program);
-    std::pair<uint8_t, int> analyzeFieldType(std::shared_ptr<ASTNode> fieldDecl);
-    void generateMemberAssignment(std::vector<uint8_t>& body,
-                              std::shared_ptr<ASTNode> memberAccess,
-                              std::shared_ptr<ASTNode> rhs,
-                              const FuncInfo& F);
+    std::pair<wasm::Type, int> analyzeFieldType(std::shared_ptr<ASTNode> fieldDecl);
+    wasm::Expression* generateMemberAssignment(std::shared_ptr<ASTNode> memberAccess,
+                                             wasm::Expression* rhs,
+                                             const FuncInfo& F);
     
     // Type system
     ValueType getExpressionType(std::shared_ptr<ASTNode> expr, const FuncInfo& F);
-    void emitTypeConversion(std::vector<uint8_t>& body, ValueType fromType, ValueType toType);
+    wasm::Expression* emitTypeConversion(wasm::Expression* expr, ValueType fromType, ValueType toType);
     bool validateAssignmentConversion(ValueType fromType, ValueType toType, const std::string& context = "");
     
     // Print statement
-    void generatePrintStatement(std::vector<uint8_t>& body,
-                                std::shared_ptr<ASTNode> printStmt,
-                                const FuncInfo& F);
+    wasm::Expression* generatePrintStatement(std::shared_ptr<ASTNode> printStmt,
+                                           const FuncInfo& F);
+    
+    // Helper to convert ValueType to Binaryen Type
+    wasm::Type valueTypeToWasmType(ValueType vt);
+    
+    // Add imported print functions
+    void addPrintImports();
 };
 
 #endif // WASM_COMPILER_H

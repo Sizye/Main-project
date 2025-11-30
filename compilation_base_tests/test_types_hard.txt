@@ -11,7 +11,7 @@ routine main() : integer is
     b := 123.789;
     a := b;
     
-    e := 5.0 + 3;
+    e := 5.5 + 3.8;
     d := e;
     
     a := 10 + 2.5;
@@ -20,7 +20,7 @@ routine main() : integer is
     
     c := b = 123.0;
     
-    e := a * 2.5;
+    e := e * 2.5;
     a := e / 2.0;
     
     return a;

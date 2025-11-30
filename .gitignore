@@ -1,31 +1,44 @@
-# Executables
-/lexer
-/parser
-*.exe
-*.out
-
-# Flex generated files
-lex.yy*
-*.output
-
-# Object files
+# Build artifacts
+build/
 *.o
-*.obj
+*.a
+*.so
+
+# Generated parser files
+lex.yy.cpp
+parser.tab.cpp
+parser.tab.hpp
+
+# Compiled binaries
+parser
+test_binaryen_minimal
+
+# WASM output
 *.wasm
+output.wasm
 
-# Build directories
-/build/
-/obj/
-/bin/
-
-# Parser generated files
-parser.tab.*
-
-# Vscode config
-.vscode
-
-# Test results
-output.txt
-
-# All AST res
+# AST visualization
 *.dot
+*.png
+
+# Test files
+test_wasm.txt
+test_*.txt
+test_*.wasm
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Binaryen build (optional - uncomment if you don't want to track it)
+# binaryen/
+
+# Legacy files (already moved)
+# legacy/

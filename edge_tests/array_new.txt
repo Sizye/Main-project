@@ -1,0 +1,12 @@
+routine checkArray (): array[3] real is 
+    var new: array[3] real;
+    new[2] := 4.23;
+    return new;
+end
+
+
+routine main(): real is
+    var asd: array[3] real;
+    asd := checkArray();
+    return asd[2];
+end

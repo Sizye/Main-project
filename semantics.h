@@ -1555,6 +1555,11 @@ private:
                 
             case ASTNodeType::FOR_LOOP:
                 std::cout << "  📊 FOR_LOOP: " << node->value << std::endl;
+                // Track the loop variable as read (it's used in the loop)
+                if (!node->value.empty()) {
+                    readVariables.insert(node->value);
+                    std::cout << "  ✅📖 TRACKED READ (loop var): " << node->value << std::endl;
+                }
                 if (node->children.size() > 0) {
                     trackReadsInExpression(node->children[0]);
                 }

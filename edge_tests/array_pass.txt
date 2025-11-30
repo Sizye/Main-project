@@ -1,0 +1,9 @@
+routine checkArrayPass (passed: array[3] real) is 
+    passed[3] := 4.334;
+end
+
+routine main(): integer is
+    var asd: array[3] real;
+    checkArrayPass(asd);
+    return asd[3];
+end

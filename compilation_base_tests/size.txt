@@ -1,0 +1,5 @@
+routine main(): integer is
+  var arr : array[105476] integer;
+  arr[5000] := 432;
+  return size(arr);
+end

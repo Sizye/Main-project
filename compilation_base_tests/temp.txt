@@ -1,5 +1,0 @@
-type Vector is array[4] real;
-type Matrix is array[4] Vector;
-var matrices : array[6] Matrix;
-
-

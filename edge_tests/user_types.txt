@@ -7,8 +7,8 @@ type Person is record
 end;
 
 routine main(): integer is
-    type myId is integer;
-    var smt: myId is 4;
+    type myId is real;
+    var smt: myId is 4.02;
     var asd: Person;
     asd.id := 123 + smt;
     return asd.id;

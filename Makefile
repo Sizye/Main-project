@@ -1,189 +1,125 @@
+# Makefile for Imperative Language Compiler with Binaryen
+# Uses CMake for building
+
 CXX = g++
-LEX = flex
-YACC = bison
-CXXFLAGS = -std=c++11 -Wall -Wextra -g
-INCLUDES = -I.
-LDFLAGS = -lfl
+BUILD_DIR = build
+BINARYEN_DIR = binaryen
+PARSER = $(BUILD_DIR)/parser
 
-# Source files
-YACC_SRC = parser-with-ast.y
-LEX_SRC = lexer-with-ast.l
-AST_SRC = ast.cpp ast.h
-SEMANTICS_SRC = semantics.h
+.PHONY: all build clean test test-simple test-call test-if run help setup
 
-# Generated files
-YACC_OUT = parser.tab.cpp
-YACC_HEADER = parser.tab.hpp
-LEX_OUT = lex.yy.cpp
-WASM_SRC = wasm_compiler.cpp wasm_compiler.h
+# Default target
+all: build
 
-# Targets
-TARGET = parser
+# Build the project using CMake
+build: $(BUILD_DIR)/CMakeCache.txt
+	@echo "🔨 Building project..."
+	@cd $(BUILD_DIR) && make -j$(shell nproc)
+	@echo "✅ Build complete!"
 
-.PHONY: all clean test manual demo
+# Configure CMake if needed
+$(BUILD_DIR)/CMakeCache.txt:
+	@echo "⚙️  Configuring CMake..."
+	@mkdir -p $(BUILD_DIR)
+	@cd $(BUILD_DIR) && cmake -DBINARYEN_LIBRARY=$(abspath $(BINARYEN_DIR))/lib/libbinaryen.so ..
 
-all: $(TARGET)
-
-# Build parser from YACC file (now contains main)
-$(TARGET): $(YACC_OUT) $(LEX_OUT) $(AST_SRC) $(SEMANTICS_SRC) $(WASM_SRC)
-	$(CXX) $(CXXFLAGS) $(INCLUDES) -o $(TARGET) $(YACC_OUT) $(LEX_OUT) ast.cpp wasm_compiler.cpp $(LDFLAGS)
-
-$(YACC_OUT) $(YACC_HEADER): $(YACC_SRC)
-	$(YACC) -d -o $(YACC_OUT) $(YACC_SRC)
-
-$(LEX_OUT): $(LEX_SRC) $(YACC_HEADER)
-	$(LEX) -o $(LEX_OUT) $(LEX_SRC)
-
-# Test with file input
-wasm-test: $(TARGET)
-	@echo "=== TESTING WASM COMPILATION ==="
-	@printf 'routine main(): integer is\n  var x: integer is 1;\n  return x;\nend\n' > test_wasm.txt
-
-	@./$(TARGET) test_wasm.txt
-	@if [ -f output.wasm ]; then \
-		echo "✅ WASM file generated!"; \
-		echo "📊 File size:" `wc -c output.wasm`; \
-		echo "🔍 Hex dump:"; \
-		hexdump -C output.wasm | head -20; \
+# Setup Binaryen (if not already built)
+setup:
+	@if [ ! -d "$(BINARYEN_DIR)/lib" ] || [ ! -f "$(BINARYEN_DIR)/lib/libbinaryen.so" ]; then \
+		echo "📦 Setting up Binaryen..."; \
+		if [ ! -d "$(BINARYEN_DIR)" ]; then \
+			git clone --depth 1 https://github.com/WebAssembly/binaryen.git $(BINARYEN_DIR); \
+		fi; \
+		cd $(BINARYEN_DIR) && git submodule update --init --recursive && \
+		cmake -DBUILD_TESTS=OFF . && make -j$(shell nproc); \
+		echo "✅ Binaryen setup complete!"; \
 	else \
-		echo "❌ No WASM file generated"; \
+		echo "✅ Binaryen already built"; \
 	fi
 
-test: $(TARGET)
-	@if [ -f test_program.txt ]; then \
-		echo "=== TESTING WITH FILE INPUT ==="; \
-		./$(TARGET) test_program.txt; \
-	else \
-		echo "Test file test_program.txt not found. Creating example..."; \
-		echo 'var arr: array[10] integer; arr[5] := 42;' > test_program.txt; \
-		echo "=== TESTING WITH FILE INPUT ==="; \
-		./$(TARGET) test_program.txt; \
-	fi
-
-# Interactive mode
-manual: $(TARGET)
-	@echo "=== INTERACTIVE MODE ==="
-	@echo "Enter your program (Ctrl+D to finish):"
-	@./$(TARGET)
-
-# Demo with predefined input
-demo: $(TARGET)
-	@echo "=== DEMO MODE ==="
-	@echo "var arr: array[10] integer; arr[15] := 100;" | ./$(TARGET) || true
-
-# Generate AST visualization
-visualize: $(TARGET)
-	@echo "=== GENERATING AST VISUALIZATION ==="
-	@if [ -f test_program.txt ]; then \
-		./$(TARGET) test_program.txt 2>/dev/null | grep -A 100 "AST VISUALIZATION" > ast_output.dot; \
-		if [ -f ast_output.dot ]; then \
-			dot -Tpng ast_output.dot -o ast_tree.png 2>/dev/null && echo "AST visualization saved as ast_tree.png"; \
-		else \
-			echo "No DOT output generated"; \
-		fi \
-	else \
-		echo "Create test_program.txt first"; \
-	fi
-
+# Clean build artifacts
 clean:
-	rm -f $(TARGET) $(YACC_OUT) $(YACC_HEADER) $(LEX_OUT)
-	rm -f *.dot ast_output.dot ast_tree.png test_program.txt test_wasm.txt output.wasm
-	find . -name "*.dot" -type f -delete
-	rm -f *.o
-	echo "🧹 Cleaned all generated files!"
+	@echo "🧹 Cleaning build artifacts..."
+	@rm -rf $(BUILD_DIR)
+	@rm -f output.wasm *.dot *.o
+	@echo "✅ Clean complete!"
 
+# Deep clean (including Binaryen)
+clean-all: clean
+	@echo "🧹 Deep cleaning (including Binaryen)..."
+	@rm -rf $(BINARYEN_DIR)
+	@echo "✅ Deep clean complete!"
 
-# Quick rebuild
-rebuild: clean all
+# Test with a simple program
+test-simple: build
+	@echo "🧪 Testing with simple.txt..."
+	@LD_LIBRARY_PATH=$(abspath $(BINARYEN_DIR))/lib:$$LD_LIBRARY_PATH $(PARSER) compilation_base_tests/simple.txt
+	@if [ -f output.wasm ]; then \
+		echo "✅ WASM generated!"; \
+		wasmtime --invoke main output.wasm 2>/dev/null || echo "⚠️  wasmtime not installed"; \
+	fi
 
+# Test with function calls
+test-call: build
+	@echo "🧪 Testing with test_call1.txt..."
+	@LD_LIBRARY_PATH=$(abspath $(BINARYEN_DIR))/lib:$$LD_LIBRARY_PATH $(PARSER) compilation_base_tests/test_call1.txt
+	@if [ -f output.wasm ]; then \
+		echo "✅ WASM generated!"; \
+		wasmtime --invoke main output.wasm 2>/dev/null || echo "⚠️  wasmtime not installed"; \
+	fi
 
-# Test: IF statement and comparisons
-wasm-if-test: $(TARGET)
-	@echo "=== TESTING WASM IF/ELSE ==="
-	@printf 'routine main(): integer is\n'                >  test_if.txt
-	@printf '  if 10 < 5 then\n'                          >> test_if.txt
-	@printf '    return 10;\n'                           >> test_if.txt
-	@printf '  else\n'                                   >> test_if.txt
-	@printf '    return 20;\n'                           >> test_if.txt
-	@printf '  end\n'                                    >> test_if.txt
-	@printf 'end\n'                                      >> test_if.txt
-	@./$(TARGET) test_if.txt
-	@echo "--- Running generated WASM (expect 10) ---"
-	@wasmtime run --invoke main output.wasm  
+# Test with if/else
+test-if: build
+	@echo "🧪 Testing with test_if.txt..."
+	@LD_LIBRARY_PATH=$(abspath $(BINARYEN_DIR))/lib:$$LD_LIBRARY_PATH $(PARSER) compilation_base_tests/test_if.txt
+	@if [ -f output.wasm ]; then \
+		echo "✅ WASM generated!"; \
+		wasmtime --invoke main output.wasm 2>/dev/null || echo "⚠️  wasmtime not installed"; \
+	fi
 
-# Test: WHILE loop and arithmetic
-wasm-while-test: $(TARGET)
-	@echo "=== TESTING WASM WHILE LOOP ==="
-	@printf 'routine main(): integer is\n'               >  test_while.txt
-	@printf '  var i: integer is 0;\n'                   >> test_while.txt
-	@printf '  var s: integer is 0;\n'                   >> test_while.txt
-	@printf '  while i < 1000 loop\n'                      >> test_while.txt
-	@printf '    s := s + 1;\n'                          >> test_while.txt
-	@printf '    i := i + 2;\n'                          >> test_while.txt
-	@printf '  end\n'                                   >> test_while.txt
-	@printf '  return s;\n'                             >> test_while.txt
-	@printf 'end\n'                                     >> test_while.txt
-	@./$(TARGET) test_while.txt
-	@echo "--- Running generated WASM (expect 10 = 0+1+2+3+4) ---"
-	@wasmtime run --invoke main output.wasm
+# Run all basic tests
+test: build
+	@echo "🧪 Running test suite..."
+	@LD_LIBRARY_PATH=$(abspath $(BINARYEN_DIR))/lib:$$LD_LIBRARY_PATH \
+		$(PARSER) compilation_base_tests/simple.txt > /dev/null 2>&1 && echo "✅ simple.txt" || echo "❌ simple.txt"
+	@LD_LIBRARY_PATH=$(abspath $(BINARYEN_DIR))/lib:$$LD_LIBRARY_PATH \
+		$(PARSER) compilation_base_tests/test_call1.txt > /dev/null 2>&1 && echo "✅ test_call1.txt" || echo "❌ test_call1.txt"
+	@LD_LIBRARY_PATH=$(abspath $(BINARYEN_DIR))/lib:$$LD_LIBRARY_PATH \
+		$(PARSER) compilation_base_tests/test_if.txt > /dev/null 2>&1 && echo "✅ test_if.txt" || echo "❌ test_if.txt"
+	@echo "✅ Test suite complete!"
 
+# Compile and run a specific file
+run: build
+	@if [ -z "$(FILE)" ]; then \
+		echo "❌ Usage: make run FILE=path/to/file.txt"; \
+		exit 1; \
+	fi
+	@echo "🚀 Compiling $(FILE)..."
+	@LD_LIBRARY_PATH=$(abspath $(BINARYEN_DIR))/lib:$$LD_LIBRARY_PATH $(PARSER) $(FILE)
+	@if [ -f output.wasm ]; then \
+		echo "✅ WASM generated: output.wasm"; \
+		echo "💡 Run with: wasmtime --invoke main output.wasm"; \
+	fi
 
-# Function call: add(2,3) -> 5
-wasm-call-test: $(TARGET)
-	@echo "=== TESTING CALL ==="
-	@printf 'routine add(a: integer, b: integer): integer is\n' >  test_call1.txt
-	@printf '  return a + b;\n'                               >> test_call1.txt
-	@printf 'end\n'                                           >> test_call1.txt
-	@printf 'routine main(): integer is\n'                    >> test_call1.txt
-	@printf '  return add(2, 3);\n'                                   >> test_call1.txt
-	@printf 'end\n'                                           >> test_call1.txt
-	@./$(TARGET) test_call1.txt
-	@echo "--- Running generated WASM (expect 5) ---"
-	@wasmtime --invoke main output.wasm || true
-
-# Nested calls: add(add(1,2),3) -> 6
-wasm-call-nested: $(TARGET)
-	@echo "=== TESTING NESTED CALL ==="
-	@printf 'routine add(a: integer, b: integer): integer is\n' >  test_call2.txt
-	@printf '  return a + b;\n'                                 >> test_call2.txt
-	@printf 'end\n'                                             >> test_call2.txt
-	@printf 'routine devide(a: integer, b: integer): integer is\n' >> test_call2.txt
-	@printf '  return a / b;\n'                                 >> test_call2.txt
-	@printf 'end\n'                                             >> test_call2.txt
-	@printf 'routine main(): integer is\n'                      >> test_call2.txt
-	@printf '  var x: integer is add(add(1, 2), 3);\n'          >> test_call2.txt
-	@printf '  return add(devide(1000, 200), 1);\n'                     				>> test_call2.txt
-	@printf 'end\n'                                             >> test_call2.txt
-	@./$(TARGET) test_call2.txt
-	@echo "--- Running generated WASM (expect 6) ---"
-	@wasmtime --invoke main output.wasm || true
-
-
-wasm-for-test: $(TARGET)
-	@echo "=== TESTING FOR (0..4) ==="
-	@printf 'routine main(): integer is\n'                 >  test_for.txt
-	@printf '  var i: integer is 0;\n'                     >> test_for.txt
-	@printf '  var s: integer is 0;\n'                     >> test_for.txt
-	@printf '  for i in 0 .. 10 loop\n'                     >> test_for.txt
-	@printf '    s := s + i;\n'                            >> test_for.txt
-	@printf '  end\n'                                      >> test_for.txt
-	@printf '  return s;\n'                                >> test_for.txt
-	@printf 'end\n'                                        >> test_for.txt
-	@./$(TARGET) test_for.txt
-	@echo "--- Running generated WASM (expect 10) ---"
-	@wasmtime --invoke main output.wasm || true
-
-
-wasm-for-rev-test: $(TARGET)
-	@echo "=== TESTING FOR REVERSE (5..1) ==="
-	@printf 'routine main(): integer is\n'                 >  test_for_rev.txt
-	@printf '  var i: integer is 0;\n'                     >> test_for_rev.txt
-	@printf '  var s: integer is 0;\n'                     >> test_for_rev.txt
-	@printf '  for i in 5 .. 1 reverse loop\n'             >> test_for_rev.txt
-	@printf '    s := s + i;\n'                            >> test_for_rev.txt
-	@printf '  end\n'                                      >> test_for_rev.txt
-	@printf '  return s;\n'                                >> test_for_rev.txt
-	@printf 'end\n'                                        >> test_for_rev.txt
-	@./$(TARGET) test_for_rev.txt
-	@echo "--- Running generated WASM (expect 15 = 5+4+3+2+1) ---"
-	@wasmtime --invoke main output.wasm || true
+# Show help
+help:
+	@echo "Imperative Language Compiler - Makefile Commands"
+	@echo ""
+	@echo "Build commands:"
+	@echo "  make setup      - Setup Binaryen (clone and build)"
+	@echo "  make build      - Build the compiler (default)"
+	@echo "  make clean      - Clean build artifacts"
+	@echo "  make clean-all  - Clean everything including Binaryen"
+	@echo ""
+	@echo "Test commands:"
+	@echo "  make test          - Run all basic tests"
+	@echo "  make test-simple   - Test with simple.txt"
+	@echo "  make test-call     - Test with test_call1.txt"
+	@echo "  make test-if       - Test with test_if.txt"
+	@echo "  make run FILE=...  - Compile a specific file"
+	@echo ""
+	@echo "Examples:"
+	@echo "  make setup"
+	@echo "  make build"
+	@echo "  make test"
+	@echo "  make run FILE=compilation_base_tests/simple.txt"

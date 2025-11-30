@@ -41,7 +41,7 @@ routine main() : integer is
         i := i+1;
     end
     for i in 10..14 loop
-        result := result +1;
+        result := result + 1;
     end
     return result;
 end

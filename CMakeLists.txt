@@ -2,12 +2,48 @@
 cmake_minimum_required(VERSION 3.10)
 project(ImperativeLanguageCompiler CXX)
 
-# Set C++ standard
-set(CMAKE_CXX_STANDARD 11)
+# Set C++ standard (Binaryen requires C++17+)
+set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 # Compiler flags
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall -Wextra -g")
+
+# Find Binaryen
+# Binaryen can be found either as a system package or built from source
+# Option 1: If Binaryen is installed system-wide
+find_path(BINARYEN_INCLUDE_DIR
+    NAMES wasm.h
+    PATHS
+        /usr/include
+        /usr/local/include
+        ${CMAKE_SOURCE_DIR}/binaryen/src
+    PATH_SUFFIXES binaryen
+)
+
+find_library(BINARYEN_LIBRARY
+    NAMES binaryen
+    PATHS
+        /usr/lib
+        /usr/local/lib
+        ${CMAKE_SOURCE_DIR}/binaryen/lib
+)
+
+# Option 2: If Binaryen is in a subdirectory (for development)
+if(NOT BINARYEN_INCLUDE_DIR AND EXISTS "${CMAKE_SOURCE_DIR}/binaryen")
+    set(BINARYEN_INCLUDE_DIR "${CMAKE_SOURCE_DIR}/binaryen/src")
+    set(BINARYEN_LIBRARY "${CMAKE_SOURCE_DIR}/binaryen/lib/libbinaryen.a")
+endif()
+
+if(BINARYEN_INCLUDE_DIR AND BINARYEN_LIBRARY)
+    message(STATUS "Found Binaryen: ${BINARYEN_INCLUDE_DIR}")
+    include_directories(${BINARYEN_INCLUDE_DIR})
+else()
+    message(WARNING "Binaryen not found. Please install Binaryen or set BINARYEN_INCLUDE_DIR and BINARYEN_LIBRARY")
+    message(STATUS "You can install Binaryen by:")
+    message(STATUS "  1. Building from source: git clone https://github.com/WebAssembly/binaryen.git && cd binaryen && cmake . && make")
+    message(STATUS "  2. Or set BINARYEN_INCLUDE_DIR and BINARYEN_LIBRARY CMake variables")
+endif()
 
 # Find required packages
 find_package(PkgConfig)
@@ -58,7 +94,6 @@ ADD_PARSER_TARGET(
 # Source files
 set(AST_SOURCES
     ast.cpp
-    main.cpp
 )
 
 set(GENERATED_SOURCES
@@ -76,6 +111,7 @@ include_directories(
 add_executable(parser
     ${AST_SOURCES}
     ${GENERATED_SOURCES}
+    wasm_compiler.cpp
 )
 
 # Link libraries (Flex library)
@@ -89,6 +125,23 @@ else()
     else()
         message(WARNING "Flex library not found, linking may fail")
     endif()
+endif()
+
+# Link Binaryen library
+if(BINARYEN_LIBRARY)
+    # Add library directory
+    get_filename_component(BINARYEN_LIB_DIR ${BINARYEN_LIBRARY} DIRECTORY)
+    link_directories(${BINARYEN_LIB_DIR})
+    # Use full path to library and ensure we use the local one, not system one
+    target_link_libraries(parser ${BINARYEN_LIBRARY})
+    # Binaryen may require pthread
+    find_package(Threads REQUIRED)
+    target_link_libraries(parser Threads::Threads)
+    # Set RPATH so it can find the library at runtime
+    set_target_properties(parser PROPERTIES
+        BUILD_RPATH "${BINARYEN_LIB_DIR}"
+        INSTALL_RPATH "${BINARYEN_LIB_DIR}"
+    )
 endif()
 
 # ========== NEW: SEMANTIC TEST SUITE ==========

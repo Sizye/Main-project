@@ -1,0 +1,9 @@
+routine main() : integer is
+    var result : integer;
+    var i: integer;
+ 
+    for i in 10..14 loop
+        result := result + 1;
+    end
+    return result;
+end
