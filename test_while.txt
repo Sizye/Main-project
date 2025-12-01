@@ -1,9 +1,15 @@
 routine main(): integer is
   var i: integer is 0;
   var s: integer is 0;
-  while i < 1000 loop
+  var j: integer is 0;
+  while i <= 10 loop
     s := s + 1;
-    i := i + 2;
+    i := i + 1;
+    while j < 10 loop
+      s := s + j;
+      j := j + 1;
+    end
+    j := 0;
   end
   return s;
 end

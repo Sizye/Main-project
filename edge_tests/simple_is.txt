@@ -1,3 +1,4 @@
+
 type Person is record
     var id: real;
     var smt: real;
@@ -11,9 +12,8 @@ end
 
 
 routine main(): integer is
-    var asd: integer;
     var bfd: Person;
-    asd := checkRecordPass(bfd);
-    
-    return asd;
+    bfd.id := 10;
+    var asd is bfd;
+    return asd.id;
 end

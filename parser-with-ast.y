@@ -960,22 +960,7 @@ int main(int argc, char* argv[]) {
                 bool semanticSuccess = analyzer.analyze(astRoot);
                 
                 printf("\n=== FINAL RESULT ===\n");
-                if (semanticSuccess) {
-                    printf("\n=== 🚀 STARTING WASM COMPILATION ===\n");
-    
-                    WasmCompiler compiler;
-                    std::string wasmFilename = "output.wasm";
-                    
-                    if (compiler.compile(astRoot, wasmFilename)) {
-                        printf("✅ WASM COMPILATION SUCCESSFUL!\n");
-                        printf("📁 Output: %s\n", wasmFilename.c_str());
-                        printf("💡 You can run it with: wasmtime %s\n", wasmFilename.c_str());
-                    } else {
-                        printf("❌ WASM COMPILATION FAILED\n");
-                        return 1;
-                    }
-                    
-                    // Print the AST
+                // Print the AST
                     printf("\n=== ABSTRACT SYNTAX TREE ===\n");
                     astRoot->print();
                     
@@ -998,6 +983,23 @@ int main(int argc, char* argv[]) {
                             printf("Install Graphviz (dot) for PNG visualization\n");
                         }
                     }
+                if (semanticSuccess) {
+                  
+                    printf("\n=== 🚀 STARTING WASM COMPILATION ===\n");
+    
+                    WasmCompiler compiler;
+                    std::string wasmFilename = "output.wasm";
+                    
+                    if (compiler.compile(astRoot, wasmFilename)) {
+                        printf("✅ WASM COMPILATION SUCCESSFUL!\n");
+                        printf("📁 Output: %s\n", wasmFilename.c_str());
+                        printf("💡 You can run it with: wasmtime %s\n", wasmFilename.c_str());
+                    } else {
+                        printf("❌ WASM COMPILATION FAILED\n");
+                        return 1;
+                    }
+                    
+                    
                 } else {
                     printf("✗ COMPILATION FAILED - SEMANTIC ERRORS DETECTED\n");
                     return 1;

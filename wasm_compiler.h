@@ -18,16 +18,25 @@ enum class ValueType {
 };
 
 class WasmCompiler {
-private:
+public:
     struct FuncInfo {
         std::string name;
-        std::vector<uint8_t> paramTypes;   // wasm value types
-        std::vector<uint8_t> resultTypes;  // 0 or 1
-        std::shared_ptr<ASTNode> node;     // ROUTINE_DECL
-        uint32_t typeIndex;                // index in type section
-        uint32_t funcIndex;                // index in function index space
+        std::vector<std::string> params;
+        std::string returnType;
+        bool isGlobal;
+        std::shared_ptr<ASTNode> node; // AST node for the function
+        uint32_t typeIndex; // Type index in the type section
+        uint32_t funcIndex; // Function index in the function section
+        std::vector<uint8_t> paramTypes; // Parameter types in WASM
+        std::vector<uint8_t> resultTypes; // Result types in WASM
     };
 
+    void generateStatement(std::vector<uint8_t>& body, std::shared_ptr<ASTNode> stmt, const FuncInfo& F);
+    void generateRoutineCall(std::vector<uint8_t>& body, std::shared_ptr<ASTNode> call, const FuncInfo& F);
+    void generateArrayParameter(std::vector<uint8_t>& body, std::shared_ptr<ASTNode> array, const FuncInfo& F);
+    void generateIsOperator(std::vector<uint8_t>& body, std::shared_ptr<ASTNode> isNode, const FuncInfo& F);
+
+private:
     // All functions in program (helpers + main)
     std::vector<FuncInfo> funcs;
     // Name->function index
@@ -204,6 +213,13 @@ private:
     void generatePrintStatement(std::vector<uint8_t>& body,
                                 std::shared_ptr<ASTNode> printStmt,
                                 const FuncInfo& F);
+    
+    // Copy helpers for records and arrays
+    void copyRecordValue(std::vector<uint8_t>& body, const std::string& recordType, const FuncInfo& F);
+    void copyArrayValue(std::vector<uint8_t>& body, const ArrayInfo& arrayInfo, const FuncInfo& F);
+    bool isRecordType(const std::string& typeName);
+    bool isArrayType(const std::string& varName, const FuncInfo& F);
+    bool isRecordVariable(const std::string& varName);
 };
 
 #endif // WASM_COMPILER_H

@@ -30,6 +30,8 @@ private:
     
     // Track which identifiers are actually routines
     std::set<std::string> routineDeclarations;
+    // Map routine name -> AST node for detailed checks
+    std::unordered_map<std::string, std::shared_ptr<ASTNode>> routineNodes;
     
     // Loop analysis
     std::map<std::string, std::pair<int, int>> loopVariableRanges;
@@ -878,6 +880,8 @@ private:
             case ASTNodeType::ROUTINE_FORWARD_DECL:
                 declaredIdentifiers.insert(node->value);
                 routineDeclarations.insert(node->value);
+                // Store AST node for the routine for later semantic checks
+                routineNodes[node->value] = node;
                 std::cout << "Found routine: " << node->value << std::endl;
                 break;
             default:
@@ -943,6 +947,9 @@ private:
                 if (node->children.size() > 0 && node->children[0]) {
                     trackVariableWrite(node->children[0]);
                 }
+                break;
+            case ASTNodeType::ROUTINE_CALL:
+                analyzeRoutineCall(node);
                 break;
             default:
                 break;
@@ -1314,6 +1321,23 @@ private:
         int preservedSideEffects = 0;
         int removedUnusedGlobals = 0;
         
+        // COLLECT all for loop variables first and mark them as used
+        std::set<std::string> forLoopVars;
+        std::function<void(std::shared_ptr<ASTNode>)> collectForLoopVars = [&](std::shared_ptr<ASTNode> n) {
+            if (!n) return;
+            if (n->type == ASTNodeType::FOR_LOOP) {
+                forLoopVars.insert(n->value);
+                // Mark loop variable as both read and written (loop uses and modifies it)
+                readVariables.insert(n->value);
+                writtenVariables.insert(n->value);
+                std::cout << "🔄 PRESERVING for loop variable: " << n->value << std::endl;
+            }
+            for (auto& ch : n->children) {
+                collectForLoopVars(ch);
+            }
+        };
+        collectForLoopVars(node);
+        
         // COLLECT all write-only variables first
         std::set<std::string> writeOnlyVarsToRemove;
         
@@ -1369,7 +1393,11 @@ private:
                     }
                 }
                 else {
-                    if (isRead) {
+                    // Check if this is a for loop variable - always preserve
+                    if (forLoopVars.find(varName) != forLoopVars.end()) {
+                        newChildren.push_back(child);
+                        std::cout << "💾 PRESERVING for loop variable: " << varName << std::endl;
+                    } else if (isRead) {
                         newChildren.push_back(child);
                         std::cout << "💾 PRESERVING read variable: " << varName << std::endl;
                     } else if (isGlobal) {
@@ -1420,7 +1448,6 @@ private:
                     } else {
                         // Remove the entire assignment (no side effects)
                         std::cout << "🔥 OPTIMIZATION: Removing assignment to write-only variable '" << target << "'" << std::endl;
-                        removeAssignmentsToVariable(target, node);
                         removedCount++;
                         continue;
                     }
@@ -1570,6 +1597,24 @@ private:
                 }
                 break;
                 
+            case ASTNodeType::VAR_DECL:
+                // Track reads in initializer (for "var x is y" or "var x: Type is expr")
+                // Check if first child is a type node or initializer
+                if (node->children.size() > 0 && node->children[0]) {
+                    auto firstChild = node->children[0];
+                    // If first child is not a type node, it's the initializer
+                    if (firstChild->type != ASTNodeType::PRIMITIVE_TYPE &&
+                        firstChild->type != ASTNodeType::USER_TYPE &&
+                        firstChild->type != ASTNodeType::ARRAY_TYPE) {
+                        // First child is the initializer (for "var x is expr")
+                        trackReadsInExpression(firstChild);
+                    } else if (node->children.size() > 1 && node->children[1]) {
+                        // Second child is the initializer (for "var x: Type is expr")
+                        trackReadsInExpression(node->children[1]);
+                    }
+                }
+                break;
+                
             default:
                 if (isExpressionContext(node->type)) {
                     std::cout << "  📊 Expression context" << std::endl;
@@ -1712,6 +1757,66 @@ private:
         }
     }
 
+    void analyzeRoutineCall(std::shared_ptr<ASTNode> routineCall) {
+        if (!routineCall || routineCall->type != ASTNodeType::ROUTINE_CALL) return;
+
+        // Ensure all arguments match the routine's parameter types
+        auto routineName = routineCall->value;
+        // Lookup routine AST node
+        auto itNode = routineNodes.find(routineName);
+        if (itNode == routineNodes.end()) {
+            error("Routine not declared: " + routineName);
+            return;
+        }
+        auto routineNode = itNode->second;
+        if (!routineNode) {
+            error("Routine node is null for: " + routineName);
+            return;
+        }
+
+        // Find PARAMETER_LIST child
+        std::shared_ptr<ASTNode> params = nullptr;
+        for (auto& ch : routineNode->children) {
+            if (ch && ch->type == ASTNodeType::PARAMETER_LIST) { params = ch; break; }
+        }
+
+        size_t paramCount = params ? params->children.size() : 0;
+        // Extract argument count from call (ARGUMENT_LIST child)
+        size_t argCount = 0;
+        for (auto& ch : routineCall->children) {
+            if (ch && ch->type == ASTNodeType::ARGUMENT_LIST) { argCount = ch->children.size(); break; }
+        }
+
+        if (paramCount != argCount) {
+            error("Argument count mismatch for routine: " + routineName);
+            return;
+        }
+
+        // (Optional) later: perform type checks per-parameter. For now, we only verify counts to avoid false errors.
+    }
+
+    ValueType getExpressionType(std::shared_ptr<ASTNode> expr, const std::unordered_map<std::string, ValueType>& typeContext) {
+        if (!expr) return ValueType::UNKNOWN;
+
+        switch (expr->type) {
+            case ASTNodeType::LITERAL_INT:
+                return ValueType::INTEGER;
+            case ASTNodeType::LITERAL_REAL:
+                return ValueType::REAL;
+            case ASTNodeType::LITERAL_BOOL:
+                return ValueType::BOOLEAN;
+            case ASTNodeType::IDENTIFIER: {
+                auto it = typeContext.find(expr->value);
+                if (it != typeContext.end()) {
+                    return it->second;
+                }
+                error("Undeclared identifier: " + expr->value);
+                return ValueType::UNKNOWN;
+            }
+            default:
+                return ValueType::UNKNOWN;
+        }
+    }
 
     void reportOptimizations() {
         std::cout << "\n=== OPTIMIZATION REPORT ===" << std::endl;

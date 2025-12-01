@@ -9,5 +9,5 @@ routine main(): integer is
     var locEmp: Person;
     employees.id := 324;
 
-    return locEmp.id;
+    return employees.id;
 end

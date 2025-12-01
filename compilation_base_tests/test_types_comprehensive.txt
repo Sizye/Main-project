@@ -36,10 +36,7 @@ routine main() : integer is
     if c then
         result := result + 1;
     end
-    while i < 10 loop
-        result := result + 1;
-        i := i+1;
-    end
+
     for i in 10..14 loop
         result := result +1;
     end

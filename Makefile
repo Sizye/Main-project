@@ -1,7 +1,7 @@
 CXX = g++
 LEX = flex
 YACC = bison
-CXXFLAGS = -std=c++11 -Wall -Wextra -g
+CXXFLAGS = -std=c++17 -Wall -Wextra -g
 INCLUDES = -I.
 LDFLAGS = -lfl
 

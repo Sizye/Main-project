@@ -1,0 +1,20 @@
+type Person is record
+    var id: real;
+    var smt: real;
+end;
+
+
+routine checkRecordPass (passed: Person): Person is 
+    var asd: Person;
+    asd.id := 52.24;
+    return asd;
+end
+
+
+routine main(): integer is
+    var asd: Person;
+    var bfd: Person;
+    var i is checkRecordPass(asd);
+    var j is checkRecordPass(bfd);
+    return i.id + j.id;
+end
