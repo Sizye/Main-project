@@ -168,6 +168,8 @@ private:
     // Array and member access generation
     wasm::Expression* generateArrayAccess(std::shared_ptr<ASTNode> arrayAccess,
                                          const FuncInfo& F);
+    wasm::Expression* adjustArrayIndexToZeroBased(wasm::Expression* oneBasedIndex,
+                                                  const std::string& debugContext);
     wasm::Expression* generateMemberAccess(std::shared_ptr<ASTNode> memberAccess,
                                           const FuncInfo& F);
     wasm::Expression* generateArrayAssignment(std::shared_ptr<ASTNode> arrayAccess,

@@ -1,0 +1,12 @@
+routine checkRecord (): array[3] integer is 
+    var new: array[3] integer;
+    new[3] := 10;
+    return new;
+end
+
+
+
+routine main(): integer is
+    var asd is checkRecord();
+    return asd[3];
+end

@@ -684,6 +684,34 @@ std::vector<wasm::Type> WasmCompiler::analyzeLocalVariables(const FuncInfo& F) {
                                         locals.push_back(wasm::Type::i32);
                                         continue; // Skip the rest, already handled
                                     }
+                                } else if (retType && retType->type == ASTNodeType::ARRAY_TYPE) {
+                                    // Function returns an array type
+                                    std::cout << "    🔍 Function returns array type" << std::endl;
+                                    auto [elemType, elemTypeName, size] = analyzeArrayType(retType);
+                                    std::cout << "    📊 Array: size=" << size << ", elemType=" << elemTypeName << std::endl;
+                                    
+                                    // Register as array variable
+                                    ArrayInfo arrInfo;
+                                    arrInfo.elemType = elemType;
+                                    arrInfo.elemTypeName = elemTypeName;
+                                    arrInfo.size = size;
+                                    arrInfo.baseOffset = globalMemoryOffset;
+                                    arrayInfos[name] = arrInfo;
+                                    
+                                    int elemSize = 4;
+                                    if (elemType == wasm::Type::f64) {
+                                        elemSize = 8;
+                                    } else if (recordTypes.find(elemTypeName) != recordTypes.end()) {
+                                        elemSize = recordTypes[elemTypeName].totalSize;
+                                    }
+                                    
+                                    globalMemoryOffset += size * elemSize;
+                                    std::cout << "    ✅ Allocated " << (size * elemSize) << " bytes for array '" << name << "'" << std::endl;
+                                    
+                                    localVarIndices[name] = nextLocalIndex++;
+                                    localVarTypes[name] = wasm::Type::i32; // Arrays stored as i32 pointers
+                                    locals.push_back(wasm::Type::i32);
+                                    continue; // Skip the rest, already handled
                                 }
                             }
                         }
@@ -735,56 +763,62 @@ void WasmCompiler::generateVarDeclaration(std::vector<wasm::Expression*>& body,
     auto recordIt = recordVariables.find(name);
     if (recordIt != recordVariables.end()) {
         std::cout << "  🔍 Variable '" << name << "' is a record variable" << std::endl;
+        std::shared_ptr<ASTNode> recordInitializer = nullptr;
         
-        // Check if there's an initializer (function call returning a record)
-        std::shared_ptr<ASTNode> initializer = nullptr;
-        if (decl->children.size() >= 1) {
-            // Check if first child is a type node or initializer
-            if (decl->children[0] && decl->children[0]->type != ASTNodeType::PRIMITIVE_TYPE &&
-                decl->children[0]->type != ASTNodeType::USER_TYPE &&
-                decl->children[0]->type != ASTNodeType::ARRAY_TYPE) {
-                // First child is not a type, it's an initializer (e.g., "var asd is checkRecord()")
-                initializer = decl->children[0];
-                std::cout << "  ✅ Found initializer (no type specified): " << tname(initializer->type) << std::endl;
+        std::cout << "  🔍 Checking for initializer in " << decl->children.size() << " children..." << std::endl;
+        if (!decl->children.empty()) {
+            auto firstChild = decl->children[0];
+            std::cout << "    First child type: " << (firstChild ? tname(firstChild->type) : "null") << std::endl;
+            if (firstChild && firstChild->type != ASTNodeType::PRIMITIVE_TYPE &&
+                firstChild->type != ASTNodeType::USER_TYPE &&
+                firstChild->type != ASTNodeType::ARRAY_TYPE) {
+                recordInitializer = firstChild;
+                std::cout << "  ✅ Found initializer at index 0 (no type specified): " << tname(recordInitializer->type);
+                if (recordInitializer->type == ASTNodeType::ROUTINE_CALL) {
+                    std::cout << " (" << recordInitializer->value << ")";
+                }
+                std::cout << std::endl;
             } else if (decl->children.size() >= 2 && decl->children[1]) {
-                // Second child is the initializer (e.g., "var asd: Person is checkRecord()")
-                initializer = decl->children[1];
-                std::cout << "  ✅ Found initializer (with type): " << tname(initializer->type) << std::endl;
+                recordInitializer = decl->children[1];
+                std::cout << "  ✅ Found initializer at index 1 (with type): " << tname(recordInitializer->type);
+                if (recordInitializer->type == ASTNodeType::ROUTINE_CALL) {
+                    std::cout << " (" << recordInitializer->value << ")";
+                }
+                std::cout << std::endl;
+            } else {
+                std::cout << "  ⚠️ No initializer found (first child is type node, no second child)" << std::endl;
             }
+        } else {
+            std::cout << "  ⚠️ No children in declaration" << std::endl;
         }
         
-        if (initializer && initializer->type == ASTNodeType::ROUTINE_CALL) {
-            std::cout << "  🔧 Initializing record from function call: " << initializer->value << std::endl;
-            // Function call returns a record - we need to copy it
-            wasm::Expression* funcCall = generateExpression(initializer, F);
+        if (recordInitializer && recordInitializer->type == ASTNodeType::ROUTINE_CALL) {
+            std::cout << "  🔧 Initializing record from function call: " << recordInitializer->value << std::endl;
+            wasm::Expression* funcCall = generateExpression(recordInitializer, F);
+            std::cout << "  ✅ Generated function call expression" << std::endl;
             
-            // Get the function return type
-            auto funcIt = funcIndexByName.find(initializer->value);
+            auto funcIt = funcIndexByName.find(recordInitializer->value);
             if (funcIt != funcIndexByName.end() && funcIt->second < funcs.size()) {
                 auto& calledFunc = funcs[funcIt->second];
                 if (!calledFunc.resultTypes.empty() && calledFunc.resultTypes[0] == wasm::Type::i32) {
-                    // Function returns a record (i32 pointer)
                     auto recordTypeIt = recordTypes.find(recordIt->second.recordType);
                     if (recordTypeIt != recordTypes.end()) {
                         int recordSize = recordTypeIt->second.totalSize;
                         std::cout << "  📊 Record size: " << recordSize << " bytes" << std::endl;
                         
-                        // Store function call result in temp local
                         wasm::Index tempLocalIndex = nextLocalIndex - 2;
                         std::cout << "  📊 Using temp local index " << tempLocalIndex << " for function result" << std::endl;
                         
-                        // Get destination address (local record variable)
-                        wasm::Expression* dstAddr;
+                        wasm::Expression* dstAddr = builder.makeConst(wasm::Literal(recordIt->second.baseOffset));
+                        std::cout << "  📊 Destination address (base offset): " << recordIt->second.baseOffset << std::endl;
+                        
                         auto localIt = localVarIndices.find(name);
                         if (localIt != localVarIndices.end()) {
-                            dstAddr = builder.makeLocalGet(localIt->second, wasm::Type::i32);
-                            std::cout << "  📊 Destination address from local: " << localIt->second << std::endl;
-                        } else {
-                            dstAddr = emitRecordBaseAddress(name);
-                            std::cout << "  📊 Destination address from base: " << recordIt->second.baseOffset << std::endl;
+                            std::cout << "  📊 Initializing local variable " << name << " (index " << localIt->second 
+                                      << ") with base address " << recordIt->second.baseOffset << std::endl;
+                            body.push_back(builder.makeLocalSet(localIt->second, dstAddr));
                         }
                         
-                        // Copy record byte by byte
                         std::vector<wasm::Expression*> copyExprs;
                         copyExprs.push_back(builder.makeLocalSet(tempLocalIndex, funcCall));
                         wasm::Expression* srcAddr = builder.makeLocalGet(tempLocalIndex, wasm::Type::i32);
@@ -816,23 +850,157 @@ void WasmCompiler::generateVarDeclaration(std::vector<wasm::Expression*>& body,
                             body.push_back(copyBlock);
                             std::cout << "  ✅ Created record copy block with " << copyExprs.size() << " operations" << std::endl;
                             return;
+                        } else {
+                            std::cout << "  ⚠️ Copy expressions list is empty!" << std::endl;
                         }
+                    } else {
+                        std::cout << "  ⚠️ Record type information not found for '" << recordIt->second.recordType << "'" << std::endl;
                     }
+                } else {
+                    std::cout << "  ⚠️ Function does not return a record pointer (i32)" << std::endl;
                 }
+            } else {
+                std::cout << "  ⚠️ Function '" << recordInitializer->value << "' not found in funcIndexByName" << std::endl;
+            }
+        } else if (recordInitializer) {
+            std::cout << "  ⚠️ Record initializer is not a ROUTINE_CALL (type=" << tname(recordInitializer->type) << ")" << std::endl;
+        }
+        
+        // Fallback: just initialize with base address
+        wasm::Expression* addr = builder.makeConst(wasm::Literal(recordIt->second.baseOffset));
+        body.push_back(emitLocalSet(name, addr));
+        std::cout << "  ✅ Initialized record variable with address " << recordIt->second.baseOffset << std::endl;
+        return;
+    }
+    
+    // Check if it's an array variable (stored in memory, local variable holds address)
+    auto arrayIt = arrayInfos.find(name);
+    if (arrayIt != arrayInfos.end()) {
+        std::cout << "  🔍 Variable '" << name << "' is an array variable" << std::endl;
+        std::shared_ptr<ASTNode> arrayInitializer = nullptr;
+        
+        std::cout << "  🔍 Checking for initializer in " << decl->children.size() << " children..." << std::endl;
+        if (!decl->children.empty()) {
+            auto firstChild = decl->children[0];
+            std::cout << "    First child type: " << (firstChild ? tname(firstChild->type) : "null") << std::endl;
+            if (firstChild && firstChild->type != ASTNodeType::PRIMITIVE_TYPE &&
+                firstChild->type != ASTNodeType::USER_TYPE &&
+                firstChild->type != ASTNodeType::ARRAY_TYPE) {
+                arrayInitializer = firstChild;
+                std::cout << "  ✅ Found initializer at index 0 (no type specified): " << tname(arrayInitializer->type);
+                if (arrayInitializer->type == ASTNodeType::ROUTINE_CALL) {
+                    std::cout << " (" << arrayInitializer->value << ")";
+                }
+                std::cout << std::endl;
+            } else if (decl->children.size() >= 2 && decl->children[1]) {
+                arrayInitializer = decl->children[1];
+                std::cout << "  ✅ Found initializer at index 1 (with type): " << tname(arrayInitializer->type);
+                if (arrayInitializer->type == ASTNodeType::ROUTINE_CALL) {
+                    std::cout << " (" << arrayInitializer->value << ")";
+                }
+                std::cout << std::endl;
+            } else {
+                std::cout << "  ⚠️ No initializer found (first child is type node, no second child)" << std::endl;
             }
         } else {
-            // No initializer - just initialize with address
-            wasm::Expression* addr = builder.makeConst(wasm::Literal(recordIt->second.baseOffset));
-            body.push_back(emitLocalSet(name, addr));
-            std::cout << "  ✅ Initialized record variable with address " << recordIt->second.baseOffset << std::endl;
-            return;
+            std::cout << "  ⚠️ No children in declaration" << std::endl;
         }
+        
+        if (arrayInitializer && arrayInitializer->type == ASTNodeType::ROUTINE_CALL) {
+            std::cout << "  🔧 Initializing array from function call: " << arrayInitializer->value << std::endl;
+            wasm::Expression* funcCall = generateExpression(arrayInitializer, F);
+            std::cout << "  ✅ Generated function call expression" << std::endl;
+            
+            auto funcIt = funcIndexByName.find(arrayInitializer->value);
+            if (funcIt != funcIndexByName.end() && funcIt->second < funcs.size()) {
+                auto& calledFunc = funcs[funcIt->second];
+                if (!calledFunc.resultTypes.empty() && calledFunc.resultTypes[0] == wasm::Type::i32) {
+                    // Function returns an array (i32 pointer)
+                    int arraySize = arrayIt->second.size;
+                    int elemSize = 4;
+                    if (arrayIt->second.elemType == wasm::Type::f64) {
+                        elemSize = 8;
+                    } else if (recordTypes.find(arrayIt->second.elemTypeName) != recordTypes.end()) {
+                        elemSize = recordTypes[arrayIt->second.elemTypeName].totalSize;
+                    }
+                    int totalArraySize = arraySize * elemSize;
+                    std::cout << "  📊 Array size: " << arraySize << " elements, element size: " << elemSize 
+                              << " bytes, total: " << totalArraySize << " bytes" << std::endl;
+                    
+                    wasm::Index tempLocalIndex = nextLocalIndex - 2;
+                    std::cout << "  📊 Using temp local index " << tempLocalIndex << " for function result" << std::endl;
+                    
+                    wasm::Expression* baseAddrConst = builder.makeConst(wasm::Literal(arrayIt->second.baseOffset));
+                    std::cout << "  📊 Destination address (base offset): " << arrayIt->second.baseOffset << std::endl;
+                    
+                    auto localIt = localVarIndices.find(name);
+                    wasm::Expression* dstAddr;
+                    if (localIt != localVarIndices.end()) {
+                        std::cout << "  📊 Initializing local variable " << name << " (index " << localIt->second 
+                                  << ") with base address " << arrayIt->second.baseOffset << std::endl;
+                        body.push_back(builder.makeLocalSet(localIt->second, baseAddrConst));
+                        // Use local variable value for destination address (for copy)
+                        dstAddr = builder.makeLocalGet(localIt->second, wasm::Type::i32);
+                    } else {
+                        dstAddr = baseAddrConst;
+                    }
+                    
+                    std::vector<wasm::Expression*> copyExprs;
+                    copyExprs.push_back(builder.makeLocalSet(tempLocalIndex, funcCall));
+                    wasm::Expression* srcAddr = builder.makeLocalGet(tempLocalIndex, wasm::Type::i32);
+                    
+                    // Copy array byte by byte
+                    for (int offset = 0; offset < totalArraySize; offset += 4) {
+                        int bytesToCopy = std::min(4, totalArraySize - offset);
+                        wasm::Expression* srcOffset = builder.makeBinary(
+                            wasm::AddInt32, srcAddr, builder.makeConst(wasm::Literal(offset))
+                        );
+                        wasm::Expression* dstOffset = builder.makeBinary(
+                            wasm::AddInt32, dstAddr, builder.makeConst(wasm::Literal(offset))
+                        );
+                        
+                        wasm::Expression* value = builder.makeLoad(
+                            bytesToCopy, false, 0, 0, srcOffset, 
+                            bytesToCopy == 8 ? wasm::Type::f64 : wasm::Type::i32, 
+                            wasm::Name("memory")
+                        );
+                        copyExprs.push_back(builder.makeStore(
+                            bytesToCopy, 0, 0, dstOffset, value,
+                            bytesToCopy == 8 ? wasm::Type::f64 : wasm::Type::i32,
+                            wasm::Name("memory")
+                        ));
+                    }
+                    
+                    if (!copyExprs.empty()) {
+                        wasm::Block* copyBlock = builder.makeBlock("copy_array_init", copyExprs);
+                        copyBlock->finalize(wasm::Type::none);
+                        body.push_back(copyBlock);
+                        std::cout << "  ✅ Created array copy block with " << copyExprs.size() << " operations" << std::endl;
+                        return;
+                    } else {
+                        std::cout << "  ⚠️ Copy expressions list is empty!" << std::endl;
+                    }
+                } else {
+                    std::cout << "  ⚠️ Function does not return an array pointer (i32)" << std::endl;
+                }
+            } else {
+                std::cout << "  ⚠️ Function '" << arrayInitializer->value << "' not found in funcIndexByName" << std::endl;
+            }
+        } else if (arrayInitializer) {
+            std::cout << "  ⚠️ Array initializer is not a ROUTINE_CALL (type=" << tname(arrayInitializer->type) << ")" << std::endl;
+        }
+        
+        // Fallback: just initialize with base address
+        wasm::Expression* addr = builder.makeConst(wasm::Literal(arrayIt->second.baseOffset));
+        body.push_back(emitLocalSet(name, addr));
+        std::cout << "  ✅ Initialized array variable with address " << arrayIt->second.baseOffset << std::endl;
+        return;
     }
     
     // Regular variable declaration - handle both "var x is value" and "var x: type is value"
     wasm::Expression* initExpr = nullptr;
     std::shared_ptr<ASTNode> typeNode = nullptr;
-    std::shared_ptr<ASTNode> initializer = nullptr;
+    std::shared_ptr<ASTNode> nonRecordInitializer = nullptr;
     
     // Determine which child is the type and which is the initializer
     if (decl->children.size() >= 1) {
@@ -850,21 +1018,21 @@ void WasmCompiler::generateVarDeclaration(std::vector<wasm::Expression*>& body,
                 std::cout << std::endl;
                 
                 if (decl->children.size() >= 2 && decl->children[1]) {
-                    initializer = decl->children[1];
-                    std::cout << "  ✅ Found initializer at index 1: " << tname(initializer->type) << std::endl;
+                    nonRecordInitializer = decl->children[1];
+                    std::cout << "  ✅ Found initializer at index 1: " << tname(nonRecordInitializer->type) << std::endl;
                 }
             } else {
                 // First child is the initializer: "var x is value" (no explicit type)
-                initializer = firstChild;
-                std::cout << "  ✅ Found initializer at index 0 (no type): " << tname(initializer->type) << std::endl;
+                nonRecordInitializer = firstChild;
+                std::cout << "  ✅ Found initializer at index 0 (no type): " << tname(nonRecordInitializer->type) << std::endl;
             }
         }
     }
     
-    if (initializer) {
+    if (nonRecordInitializer) {
         // Has initializer
         std::cout << "  🔧 Generating expression for initializer..." << std::endl;
-        initExpr = generateExpression(initializer, F);
+        initExpr = generateExpression(nonRecordInitializer, F);
         std::cout << "  ✅ Generated initializer expression (type=" << initExpr->type << ")" << std::endl;
     } else {
         // No initializer - initialize to 0 based on type
@@ -894,8 +1062,8 @@ void WasmCompiler::generateVarDeclaration(std::vector<wasm::Expression*>& body,
     
     // Determine source and target types for conversion
     ValueType sourceType = ValueType::INTEGER; // Default
-    if (initializer) {
-        sourceType = getExpressionType(initializer, F);
+    if (nonRecordInitializer) {
+        sourceType = getExpressionType(nonRecordInitializer, F);
         std::cout << "  📊 Source type from initializer: " << (int)sourceType << std::endl;
     } else {
         // No initializer - source type matches target type (both 0)
@@ -925,7 +1093,7 @@ void WasmCompiler::generateVarDeclaration(std::vector<wasm::Expression*>& body,
         std::cout << "  📊 Target type from type node: " << (int)targetType << std::endl;
     } else {
         // No explicit type - infer from initializer
-        if (initializer) {
+        if (nonRecordInitializer) {
             targetType = sourceType; // Use source type as target
             std::cout << "  📊 No explicit type, inferring from initializer: " << (int)targetType << std::endl;
         } else {
@@ -980,18 +1148,9 @@ wasm::Expression* WasmCompiler::generateFunctionBody(const FuncInfo& F) {
         switch (s->type) {
             case ASTNodeType::VAR_DECL: {
                 std::vector<wasm::Expression*> varBody;
-                const std::string& varName = s->value;
-                auto recordIt = recordVariables.find(varName);
-                if (recordIt != recordVariables.end()) {
-                    // Record variable - initialize local with address (whether or not it has an initializer)
-                    // For records, the "initializer" in the AST is not used - we always initialize with the address
-                    wasm::Expression* addr = builder.makeConst(wasm::Literal(recordIt->second.baseOffset));
-                    varBody.push_back(emitLocalSet(varName, addr));
-                    std::cout << "🔧 Initializing record variable '" << varName 
-                              << "' with address " << recordIt->second.baseOffset << std::endl;
-                } else {
-                    generateVarDeclaration(varBody, s, F);
-                }
+                // Let generateVarDeclaration handle both regular and record variables,
+                // including proper initialization from 'is' initializers and function calls.
+                generateVarDeclaration(varBody, s, F);
                 bodyExprs.insert(bodyExprs.end(), varBody.begin(), varBody.end());
                 break;
             }
@@ -2041,6 +2200,86 @@ wasm::Expression* WasmCompiler::generateCall(std::shared_ptr<ASTNode> call,
         }
     }
 
+    // Handle built-in functions
+    std::string funcName = call->value;
+    if (funcName == "size") {
+        std::cout << "  🔧 Built-in function 'size' called" << std::endl;
+        if (args.size() != 1) {
+            std::cout << "  ⚠️ size() expects exactly 1 argument, got " << args.size() << std::endl;
+            return emitI32Const(0);
+        }
+        // The argument should be an array identifier
+        // We need to get the array name from the AST node
+        std::string arrayName;
+        if (!call->children.empty()) {
+            auto argList = call->children[0];
+            if (argList && argList->type == ASTNodeType::ARGUMENT_LIST && !argList->children.empty()) {
+                auto arg = argList->children[0];
+                if (arg && arg->type == ASTNodeType::IDENTIFIER) {
+                    arrayName = arg->value;
+                }
+            }
+        }
+        if (arrayName.empty()) {
+            std::cout << "  ⚠️ size() argument is not an array identifier" << std::endl;
+            return emitI32Const(0);
+        }
+        std::cout << "  📊 Getting size of array '" << arrayName << "'" << std::endl;
+        auto it = arrayInfos.find(arrayName);
+        if (it != arrayInfos.end()) {
+            std::cout << "  ✅ Found local array '" << arrayName << "' with size " << it->second.size << std::endl;
+            return emitI32Const(it->second.size);
+        } else {
+            auto globalIt = globalArrays.find(arrayName);
+            if (globalIt != globalArrays.end()) {
+                std::cout << "  ✅ Found global array '" << arrayName << "' with size " << globalIt->second.size << std::endl;
+                return emitI32Const(globalIt->second.size);
+            } else {
+                std::cout << "  ⚠️ Unknown array in size(): " << arrayName << std::endl;
+                return emitI32Const(0);
+            }
+        }
+    } else if (funcName == "print") {
+        std::cout << "  🔧 Built-in function 'print' called" << std::endl;
+        if (args.empty()) {
+            std::cout << "  ⚠️ print() expects at least 1 argument" << std::endl;
+            return builder.makeNop();
+        }
+        // Generate print calls for each argument
+        std::vector<wasm::Expression*> printExprs;
+        for (size_t i = 0; i < args.size(); ++i) {
+            auto arg = args[i];
+            ValueType argType = ValueType::INTEGER;
+            // Try to determine the type from the AST node
+            if (!call->children.empty()) {
+                auto argList = call->children[0];
+                if (argList && argList->type == ASTNodeType::ARGUMENT_LIST && i < argList->children.size()) {
+                    auto argNode = argList->children[i];
+                    if (argNode) {
+                        argType = getExpressionType(argNode, F);
+                        std::cout << "  📝 PRINT argument " << i << ": type=" << (int)argType << std::endl;
+                    }
+                }
+            }
+            // For now, we'll use a simple host function call to print
+            // In a real implementation, we'd need to import a print function from the host
+            // For now, we'll just log it and return a nop
+            std::cout << "  📝 PRINT: value (type=" << (int)argType << ")" << std::endl;
+            // TODO: Implement actual printing via host function
+            // For now, we'll just evaluate the expression (side effects) and drop it
+            printExprs.push_back(builder.makeDrop(arg));
+        }
+        if (printExprs.empty()) {
+            return builder.makeNop();
+        } else if (printExprs.size() == 1) {
+            return printExprs[0];
+        } else {
+            wasm::Block* printBlock = builder.makeBlock("print_block", printExprs);
+            printBlock->finalize(wasm::Type::none);
+            return printBlock;
+        }
+    }
+
     auto it = funcIndexByName.find(call->value);
     if (it == funcIndexByName.end()) {
         std::cout << "  ⚠️ Unknown callee: " << call->value << " (push 0)\n";
@@ -2260,6 +2499,20 @@ wasm::Type WasmCompiler::getArrayType(std::shared_ptr<ASTNode> arrayTypeNode) {
 // Array and Member Access Generation
 // ======================================================================
 
+wasm::Expression* WasmCompiler::adjustArrayIndexToZeroBased(wasm::Expression* oneBasedIndex,
+                                                           const std::string& debugContext) {
+    if (!oneBasedIndex) {
+        std::cout << "  ⚠️ " << debugContext << ": null index expression, defaulting to 0" << std::endl;
+        return emitI32Const(0);
+    }
+    std::cout << "  🔧 " << debugContext << ": converting 1-based index to 0-based" << std::endl;
+    return builder.makeBinary(
+        wasm::SubInt32,
+        oneBasedIndex,
+        builder.makeConst(wasm::Literal(1))
+    );
+}
+
 wasm::Expression* WasmCompiler::generateArrayAccess(std::shared_ptr<ASTNode> arrayAccess,
                                                 const FuncInfo& F) {
     if (!arrayAccess || arrayAccess->children.size() != 2) {
@@ -2312,7 +2565,9 @@ wasm::Expression* WasmCompiler::generateSimpleArrayAccess(std::shared_ptr<ASTNod
         builder.makeConst(wasm::Literal(arrayInfo.baseOffset)) :
         emitLocalGet(arrayName);
     
-    wasm::Expression* index = generateExpression(indexExpr, F);
+    wasm::Expression* oneBasedIndex = generateExpression(indexExpr, F);
+    wasm::Expression* index = adjustArrayIndexToZeroBased(oneBasedIndex, 
+        "array '" + arrayName + "' access");
     
     int elemSize = (arrayInfo.elemType == wasm::Type::f64) ? 8 : 4;
     if (recordTypes.find(arrayInfo.elemTypeName) != recordTypes.end()) {
@@ -2389,7 +2644,9 @@ wasm::Expression* WasmCompiler::generateMemberArrayAccess(std::shared_ptr<ASTNod
             builder.makeConst(wasm::Literal(fieldOffset))
         );
         
-        wasm::Expression* index = generateExpression(indexExpr, F);
+        wasm::Expression* oneBasedIndex = generateExpression(indexExpr, F);
+        wasm::Expression* index = adjustArrayIndexToZeroBased(oneBasedIndex,
+            "record array field '" + fieldName + "' access on '" + recordName + "'");
         int elemSize = (elemType == wasm::Type::f64) ? 8 : 4;
         
         wasm::Expression* addr = builder.makeBinary(
@@ -2463,14 +2720,18 @@ wasm::Expression* WasmCompiler::generateMemberArrayAccess(std::shared_ptr<ASTNod
         // Calculate address: arrayBase + (firstIndex * recordSize) + fieldOffset + (secondIndex * elemSize)
         wasm::Expression* arrayBase = builder.makeConst(wasm::Literal(arrayInfo.baseOffset));
         
-        wasm::Expression* firstIdx = generateExpression(firstIndex, F);
+        wasm::Expression* firstIdxOneBased = generateExpression(firstIndex, F);
+        wasm::Expression* firstIdx = adjustArrayIndexToZeroBased(firstIdxOneBased,
+            "array-of-record access '" + arrayVar->value + "' (element index)");
         wasm::Expression* recordSize = builder.makeConst(wasm::Literal(recordTypeIt->second.totalSize));
         wasm::Expression* recordOffset = builder.makeBinary(wasm::MulInt32, firstIdx, recordSize);
         wasm::Expression* elementBase = builder.makeBinary(wasm::AddInt32, arrayBase, recordOffset);
         wasm::Expression* fieldBase = builder.makeBinary(wasm::AddInt32, elementBase, 
                                                           builder.makeConst(wasm::Literal(fieldOffset)));
         
-        wasm::Expression* secondIdx = generateExpression(indexExpr, F);
+        wasm::Expression* secondIdxOneBased = generateExpression(indexExpr, F);
+        wasm::Expression* secondIdx = adjustArrayIndexToZeroBased(secondIdxOneBased,
+            "record array field '" + fieldName + "' inner index");
         int elemSize = (elemType == wasm::Type::f64) ? 8 : 4;
         wasm::Expression* addr = builder.makeBinary(
             wasm::AddInt32,
@@ -2629,14 +2890,18 @@ wasm::Expression* WasmCompiler::generateArrayAssignment(std::shared_ptr<ASTNode>
             arrayBase = builder.makeConst(wasm::Literal(arrayInfo.baseOffset));
         }
         
-        wasm::Expression* firstIdx = generateExpression(firstIndex, F);
+        wasm::Expression* firstIdxOneBased = generateExpression(firstIndex, F);
+        wasm::Expression* firstIdx = adjustArrayIndexToZeroBased(firstIdxOneBased,
+            "array assignment outer index for '" + arrayName + "'");
         wasm::Expression* recordSize = builder.makeConst(wasm::Literal(recordTypeIt->second.totalSize));
         wasm::Expression* recordOffset = builder.makeBinary(wasm::MulInt32, firstIdx, recordSize);
         wasm::Expression* elementBase = builder.makeBinary(wasm::AddInt32, arrayBase, recordOffset);
         wasm::Expression* fieldBase = builder.makeBinary(wasm::AddInt32, elementBase, 
                                                           builder.makeConst(wasm::Literal(fieldOffset)));
         
-        wasm::Expression* secondIdx = generateExpression(indexExpr, F);
+        wasm::Expression* secondIdxOneBased = generateExpression(indexExpr, F);
+        wasm::Expression* secondIdx = adjustArrayIndexToZeroBased(secondIdxOneBased,
+            "array assignment inner index for field '" + fieldName + "'");
         int elemSize = (fieldType == wasm::Type::f64) ? 8 : 4;
         wasm::Expression* finalAddr = builder.makeBinary(
             wasm::AddInt32,
@@ -2664,7 +2929,9 @@ wasm::Expression* WasmCompiler::generateArrayAssignment(std::shared_ptr<ASTNode>
         emitLocalGet(arrayName) :
         builder.makeConst(wasm::Literal(arrayInfo.baseOffset));
     
-    wasm::Expression* index = generateExpression(indexExpr, F);
+    wasm::Expression* oneBasedIndex = generateExpression(indexExpr, F);
+    wasm::Expression* index = adjustArrayIndexToZeroBased(oneBasedIndex,
+        "array assignment for '" + arrayName + "'");
     
     int elemSize = (arrayInfo.elemType == wasm::Type::f64) ? 8 : 4;
     if (recordTypes.find(arrayInfo.elemTypeName) != recordTypes.end()) {
@@ -2916,7 +3183,9 @@ wasm::Expression* WasmCompiler::generateMemberAccess(std::shared_ptr<ASTNode> me
     } else {
             arrayBase = builder.makeConst(wasm::Literal(arrayIt->second.baseOffset));
         }
-        wasm::Expression* index = generateExpression(indexExpr, F);
+        wasm::Expression* oneBasedIndex = generateExpression(indexExpr, F);
+        wasm::Expression* index = adjustArrayIndexToZeroBased(oneBasedIndex,
+            "member access of array '" + arrayName + "'");
         wasm::Expression* recordSize = builder.makeConst(wasm::Literal(recordTypeIt->second.totalSize));
         wasm::Expression* recordOffset = builder.makeBinary(wasm::MulInt32, index, recordSize);
         wasm::Expression* elementBase = builder.makeBinary(wasm::AddInt32, arrayBase, recordOffset);
@@ -3103,7 +3372,9 @@ wasm::Expression* WasmCompiler::generateMemberAssignment(std::shared_ptr<ASTNode
         } else {
             arrayBase = builder.makeConst(wasm::Literal(arrayIt->second.baseOffset));
         }
-        wasm::Expression* index = generateExpression(indexExpr, F);
+        wasm::Expression* oneBasedIndex = generateExpression(indexExpr, F);
+        wasm::Expression* index = adjustArrayIndexToZeroBased(oneBasedIndex,
+            "member assignment of array '" + arrayName + "'");
         wasm::Expression* recordSize = builder.makeConst(wasm::Literal(recordTypeIt->second.totalSize));
         wasm::Expression* recordOffset = builder.makeBinary(wasm::MulInt32, index, recordSize);
         wasm::Expression* elementBase = builder.makeBinary(wasm::AddInt32, arrayBase, recordOffset);

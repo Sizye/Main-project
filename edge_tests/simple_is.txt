@@ -1,4 +1,4 @@
 routine main(): integer is
-    var asd is 4.34;
+    var asd is true;
     return asd;
 end

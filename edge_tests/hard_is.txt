@@ -5,7 +5,7 @@ end;
 
 routine checkRecord (): Person is 
     var new: Person;
-    new.id := 10;
+    new.smt := 10;
     return new;
 end
 
@@ -13,5 +13,5 @@ end
 
 routine main(): integer is
     var asd is checkRecord();
-    return asd.id;
+    return asd.smt;
 end
