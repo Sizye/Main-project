@@ -1259,52 +1259,105 @@ wasm::Expression* WasmCompiler::generateIfStatement(std::shared_ptr<ASTNode> ifs
     }
 }
 
+// Static counter for unique while loop names
+static int whileLoopCounter = 0;
+
 wasm::Expression* WasmCompiler::generateWhileLoop(std::shared_ptr<ASTNode> w,
                                      const FuncInfo& F) {
-    if (!w || w->children.size() < 2) return builder.makeNop();
+    std::cout << "🔧 generateWhileLoop: Starting while loop generation" << std::endl;
+    if (!w || w->children.size() < 2) {
+        std::cout << "⚠️ Malformed WHILE_LOOP node" << std::endl;
+        return builder.makeNop();
+    }
+    
+    // Generate unique names for this while loop
+    int loopId = whileLoopCounter++;
+    std::string blockName = "while_block_" + std::to_string(loopId);
+    std::string loopName = "while_loop_" + std::to_string(loopId);
+    std::cout << "  📊 Generated unique names: block='" << blockName 
+              << "', loop='" << loopName << "'" << std::endl;
+    
     auto cond = w->children[0];
     auto loopB = w->children[1];
-
-    std::string loopName = "loop";
+    
+    std::cout << "  🔧 Processing condition..." << std::endl;
     wasm::Expression* condExpr = generateExpression(cond, F);
+    ValueType condType = getExpressionType(cond, F);
+    std::cout << "  📊 Condition expression type: " << (int)condType << std::endl;
+    
+    // Ensure condition is boolean (i32)
+    if (condType != ValueType::BOOLEAN && condType != ValueType::INTEGER) {
+        std::cout << "  ⚠️ Converting condition to boolean" << std::endl;
+        condExpr = emitTypeConversion(condExpr, condType, ValueType::BOOLEAN);
+    }
     
     std::vector<wasm::Expression*> bodyExprs;
     if (loopB && loopB->type == ASTNodeType::BODY) {
+        std::cout << "  🔧 Processing loop body with " << loopB->children.size() << " statements" << std::endl;
         for (auto& s : loopB->children) {
             if (!s) continue;
+            std::cout << "    🔧 Processing statement type: " << tname(s->type) << std::endl;
             switch (s->type) {
-                case ASTNodeType::ASSIGNMENT: bodyExprs.push_back(generateAssignment(s, F)); break;
-                case ASTNodeType::IF_STMT: bodyExprs.push_back(generateIfStatement(s, F)); break;
-                case ASTNodeType::WHILE_LOOP: bodyExprs.push_back(generateWhileLoop(s, F)); break;
-                case ASTNodeType::FOR_LOOP: bodyExprs.push_back(generateForLoop(s, F)); break;
-                case ASTNodeType::RETURN_STMT: bodyExprs.push_back(generateReturn(s, F)); break;
+                case ASTNodeType::ASSIGNMENT: 
+                    bodyExprs.push_back(generateAssignment(s, F)); 
+                    std::cout << "      ✅ Added assignment to body" << std::endl;
+                    break;
+                case ASTNodeType::IF_STMT: 
+                    bodyExprs.push_back(generateIfStatement(s, F)); 
+                    break;
+                case ASTNodeType::WHILE_LOOP: 
+                    std::cout << "      🔧 Found nested WHILE_LOOP, generating..." << std::endl;
+                    bodyExprs.push_back(generateWhileLoop(s, F)); 
+                    std::cout << "      ✅ Added nested while loop to body" << std::endl;
+                    break;
+                case ASTNodeType::FOR_LOOP: 
+                    bodyExprs.push_back(generateForLoop(s, F)); 
+                    break;
+                case ASTNodeType::RETURN_STMT: 
+                    bodyExprs.push_back(generateReturn(s, F)); 
+                    break;
                 case ASTNodeType::VAR_DECL: {
                     std::vector<wasm::Expression*> varBody;
                     generateVarDeclaration(varBody, s, F);
                     bodyExprs.insert(bodyExprs.end(), varBody.begin(), varBody.end());
                     break;
                 }
-                default: break;
+                default: 
+                    std::cout << "      ⚠️ Unhandled statement type in while body: " << tname(s->type) << std::endl;
+                    break;
             }
         }
+    } else {
+        std::cout << "  ⚠️ No valid loop body found" << std::endl;
     }
     
+    std::cout << "  📊 Loop body has " << bodyExprs.size() << " expressions" << std::endl;
     wasm::Expression* bodyBlock = bodyExprs.empty() ? builder.makeNop() :
         (bodyExprs.size() == 1 ? bodyExprs[0] : builder.makeBlock("", bodyExprs));
     
-    // Create: block (loop (if (not cond) (br 1)) body (br 0))
+    // Create: block (loop (if (not cond) (br block)) body (br loop))
+    // The condition check: if condition is false (not cond), break out of the block
+    std::cout << "  🔧 Creating condition check: if (not cond) break to '" << blockName << "'" << std::endl;
     wasm::Expression* ifBreak = builder.makeIf(
         builder.makeUnary(wasm::EqZInt32, condExpr),
-        builder.makeBreak("block", nullptr, nullptr)
+        builder.makeBreak(blockName, nullptr, nullptr)
     );
+    std::cout << "  ✅ Created condition break expression" << std::endl;
     
     std::vector<wasm::Expression*> loopBody;
     loopBody.push_back(ifBreak);
+    std::cout << "  ✅ Added condition check to loop body" << std::endl;
     loopBody.push_back(bodyBlock);
+    std::cout << "  ✅ Added body block to loop body" << std::endl;
     loopBody.push_back(builder.makeBreak(loopName, nullptr, nullptr));
+    std::cout << "  ✅ Added continue break to loop body (breaks to '" << loopName << "')" << std::endl;
     
     wasm::Expression* loop = builder.makeLoop(loopName, builder.makeBlock("", loopBody));
-    return builder.makeBlock("block", {loop});
+    std::cout << "  ✅ Created loop with name '" << loopName << "'" << std::endl;
+    wasm::Expression* result = builder.makeBlock(blockName, {loop});
+    std::cout << "✅ generateWhileLoop: Completed while loop (block='" << blockName 
+              << "', loop='" << loopName << "')" << std::endl;
+    return result;
 }
 
 wasm::Expression* WasmCompiler::generateForLoop(std::shared_ptr<ASTNode> forNode,
