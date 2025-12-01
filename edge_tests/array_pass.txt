@@ -1,9 +1,12 @@
 routine checkArrayPass (passed: array[3] real) is 
     passed[3] := 4.32;
+    passed[2] := 45.32;
+    passed[1] := 4886.32;
 end
 
 routine main(): real is
     var asd: array[3] real;
     checkArrayPass(asd);
-    return asd[3];
+    asd[1] :=234;
+    return asd[1];
 end

@@ -1,8 +1,12 @@
 routine main(): integer is
   var i: integer is 0;
+  var t: integer is 0;
   var s: integer is 0;
   for i in 0 .. 10 loop
     s := s + i;
+    for t in 0 .. 10 loop
+      s := s + i;
+    end
   end
   return s;
 end

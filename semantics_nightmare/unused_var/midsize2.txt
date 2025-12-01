@@ -27,11 +27,6 @@ routine initializeCompany() is
         company.employees[i].salary := 50000.0 + (i * 1000.0);
         company.employees[i].isActive := true;
         
-        for j in 1..5 loop
-            var tempId: integer;
-            tempId := (i * 100) + j;
-            company.employees[i].id := tempId;  
-        end
     end
 end
 

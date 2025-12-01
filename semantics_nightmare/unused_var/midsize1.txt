@@ -2,7 +2,6 @@ var globalCounter: integer;
 
 routine sideEffectFunction(): integer is
     globalCounter := globalCounter + 1;
-    print "Side effect executed!";
     return 100;
 end
 
@@ -10,7 +9,7 @@ routine pureFunction(x: integer, y: integer): integer is
     return x * y + (x - y);
 end
 
-routine complexLogic() is
+routine complexLogic(): integer is
     var condition: boolean;
     var result: integer;
     var writeOnly: real;
@@ -28,8 +27,7 @@ routine complexLogic() is
         var deadInElse: real;
         deadInElse := 1.618;
     end
-
-    print result;
+    return result;
 end
 
 routine neverCalled() is
@@ -42,5 +40,6 @@ routine main(): integer is
     complexLogic();
     var unused: integer;
     unused := sideEffectFunction();
+    print ("dfsfsdfsd");
     return globalCounter;
 end

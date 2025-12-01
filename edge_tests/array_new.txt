@@ -1,6 +1,8 @@
 routine checkArray (): array[3] real is 
     var new: array[3] real;
     new[2] := 100;
+    new[1] := 150;
+    new[3] := 130;
     return new;
 end
 
@@ -10,5 +12,5 @@ routine main(): real is
     asd := checkArray();
     var abd: array[10] real;
     abd := checkArray();
-    return asd[2] + abd[2];
+    return asd[3] + abd[1];
 end

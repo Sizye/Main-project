@@ -12,6 +12,6 @@ routine main(): real is
     var i: real;
     i := 234+33.453453;
     var employees: array[10] Person;
-    employees[1].name[32] := 1 + 10034.345;
+    employees[1].name[32] := 0.7 + 10034.345;
     return employees[1].name[32];
 end
