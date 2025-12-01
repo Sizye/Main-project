@@ -1,0 +1,17 @@
+type Person is record
+    var id: integer;
+    var smt: real;
+end;
+
+routine checkRecord (): Person is 
+    var new: Person;
+    new.id := 10;
+    return new;
+end
+
+
+
+routine main(): integer is
+    var asd is checkRecord();
+    return asd.id;
+end

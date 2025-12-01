@@ -1,0 +1,4 @@
+routine main(): integer is
+    var asd is 4.34;
+    return asd;
+end

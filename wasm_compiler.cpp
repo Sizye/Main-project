@@ -557,8 +557,15 @@ std::vector<wasm::Type> WasmCompiler::analyzeLocalVariables(const FuncInfo& F) {
         if (localVarIndices.count(name)) continue;
         
         if (s->children.size() >= 1 && s->children[0]) {
-            auto typeNode = s->children[0];
-            if (typeNode->type == ASTNodeType::USER_TYPE) {
+            auto firstChild = s->children[0];
+            
+            // Check if first child is a type node or an initializer
+            if (firstChild->type == ASTNodeType::PRIMITIVE_TYPE ||
+                firstChild->type == ASTNodeType::USER_TYPE ||
+                firstChild->type == ASTNodeType::ARRAY_TYPE) {
+                // First child is a type node: "var x: type is value" or "var x: type"
+                auto typeNode = firstChild;
+                if (typeNode->type == ASTNodeType::USER_TYPE) {
                 // First check if it's a record type
                 auto it = recordTypes.find(typeNode->value);
                 if (it != recordTypes.end()) {
@@ -620,7 +627,79 @@ std::vector<wasm::Type> WasmCompiler::analyzeLocalVariables(const FuncInfo& F) {
                 localVarTypes[name] = wt;  // Track the type
                 locals.push_back(wt);
             }
+            } else {
+                // First child is an initializer: "var x is value" (no explicit type)
+                // Infer type from initializer
+                std::cout << "  🔍 Variable '" << name << "' has no explicit type, inferring from initializer..." << std::endl;
+                wasm::Type inferredType = wasm::Type::i32; // Default
+                
+                if (firstChild->type == ASTNodeType::LITERAL_INT) {
+                    inferredType = wasm::Type::i32;
+                    std::cout << "    ✅ Inferred type: i32 (from LITERAL_INT)" << std::endl;
+                } else if (firstChild->type == ASTNodeType::LITERAL_REAL) {
+                    inferredType = wasm::Type::f64;
+                    std::cout << "    ✅ Inferred type: f64 (from LITERAL_REAL)" << std::endl;
+                } else if (firstChild->type == ASTNodeType::LITERAL_BOOL) {
+                    inferredType = wasm::Type::i32;
+                    std::cout << "    ✅ Inferred type: i32 (from LITERAL_BOOL)" << std::endl;
+                } else if (firstChild->type == ASTNodeType::ROUTINE_CALL) {
+                    // Function call - check return type
+                    auto funcIt = funcIndexByName.find(firstChild->value);
+                    if (funcIt != funcIndexByName.end() && funcIt->second < funcs.size()) {
+                        auto& calledFunc = funcs[funcIt->second];
+                        if (!calledFunc.resultTypes.empty()) {
+                            inferredType = calledFunc.resultTypes[0];
+                            std::cout << "    ✅ Inferred type from function return: " << inferredType << std::endl;
+                            
+                            // Check if function returns a record (i32 pointer means record/array)
+                            if (inferredType == wasm::Type::i32) {
+                                // Check if it's actually a record by looking at the function signature
+                                std::shared_ptr<ASTNode> retType = nullptr;
+                                for (auto& ch : calledFunc.node->children) {
+                                    if (ch && (ch->type == ASTNodeType::PRIMITIVE_TYPE || 
+                                               ch->type == ASTNodeType::USER_TYPE ||
+                                               ch->type == ASTNodeType::ARRAY_TYPE)) {
+                                        retType = ch;
+                                        break;
+                                    }
+                                }
+                                
+                                if (retType && retType->type == ASTNodeType::USER_TYPE) {
+                                    // Function returns a record type
+                                    std::string recordTypeName = retType->value;
+                                    auto recordTypeIt = recordTypes.find(recordTypeName);
+                                    if (recordTypeIt != recordTypes.end()) {
+                                        std::cout << "    🔍 Function returns record type: " << recordTypeName << std::endl;
+                                        // Register as record variable
+                                        RecordVarInfo recVar;
+                                        recVar.recordType = recordTypeName;
+                                        recVar.size = recordTypeIt->second.totalSize;
+                                        recVar.baseOffset = globalMemoryOffset;
+                                        
+                                        recordVariables[name] = recVar;
+                                        globalMemoryOffset += recVar.size;
+                                        
+                                        localVarIndices[name] = nextLocalIndex++;
+                                        localVarTypes[name] = wasm::Type::i32; // Records stored as i32 pointers
+                                        locals.push_back(wasm::Type::i32);
+                                        continue; // Skip the rest, already handled
+                                    }
+                                }
+                            }
+                        }
+                    }
+                } else {
+                    std::cout << "    ⚠️ Cannot infer type from initializer type " << tname(firstChild->type) 
+                              << ", defaulting to i32" << std::endl;
+                }
+                
+                localVarIndices[name] = nextLocalIndex++;
+                localVarTypes[name] = inferredType;
+                locals.push_back(inferredType);
+            }
         } else {
+            // No children - no type and no initializer
+            std::cout << "  ⚠️ Variable '" << name << "' has no type and no initializer, defaulting to i32" << std::endl;
             localVarIndices[name] = nextLocalIndex++;
             locals.push_back(wasm::Type::i32);
         }
@@ -638,27 +717,159 @@ void WasmCompiler::generateVarDeclaration(std::vector<wasm::Expression*>& body,
                                           const FuncInfo& F) {
     if (!decl) return;
     const std::string& name = decl->value;
+    std::cout << "🔧 generateVarDeclaration: Processing variable '" << name << "'" << std::endl;
+    std::cout << "  📊 Declaration has " << decl->children.size() << " children" << std::endl;
+    for (size_t i = 0; i < decl->children.size(); ++i) {
+        if (decl->children[i]) {
+            std::cout << "    [" << i << "] type=" << tname(decl->children[i]->type);
+            if (decl->children[i]->type == ASTNodeType::PRIMITIVE_TYPE || 
+                decl->children[i]->type == ASTNodeType::LITERAL_INT ||
+                decl->children[i]->type == ASTNodeType::LITERAL_REAL) {
+                std::cout << ", value=" << decl->children[i]->value;
+            }
+            std::cout << std::endl;
+        }
+    }
     
     // Check if it's a record variable (stored in memory, local variable holds address)
     auto recordIt = recordVariables.find(name);
     if (recordIt != recordVariables.end()) {
-        // Initialize the local variable with the record's memory address
-        wasm::Expression* addr = builder.makeConst(wasm::Literal(recordIt->second.baseOffset));
-        body.push_back(emitLocalSet(name, addr));
-        return;
+        std::cout << "  🔍 Variable '" << name << "' is a record variable" << std::endl;
+        
+        // Check if there's an initializer (function call returning a record)
+        std::shared_ptr<ASTNode> initializer = nullptr;
+        if (decl->children.size() >= 1) {
+            // Check if first child is a type node or initializer
+            if (decl->children[0] && decl->children[0]->type != ASTNodeType::PRIMITIVE_TYPE &&
+                decl->children[0]->type != ASTNodeType::USER_TYPE &&
+                decl->children[0]->type != ASTNodeType::ARRAY_TYPE) {
+                // First child is not a type, it's an initializer (e.g., "var asd is checkRecord()")
+                initializer = decl->children[0];
+                std::cout << "  ✅ Found initializer (no type specified): " << tname(initializer->type) << std::endl;
+            } else if (decl->children.size() >= 2 && decl->children[1]) {
+                // Second child is the initializer (e.g., "var asd: Person is checkRecord()")
+                initializer = decl->children[1];
+                std::cout << "  ✅ Found initializer (with type): " << tname(initializer->type) << std::endl;
+            }
+        }
+        
+        if (initializer && initializer->type == ASTNodeType::ROUTINE_CALL) {
+            std::cout << "  🔧 Initializing record from function call: " << initializer->value << std::endl;
+            // Function call returns a record - we need to copy it
+            wasm::Expression* funcCall = generateExpression(initializer, F);
+            
+            // Get the function return type
+            auto funcIt = funcIndexByName.find(initializer->value);
+            if (funcIt != funcIndexByName.end() && funcIt->second < funcs.size()) {
+                auto& calledFunc = funcs[funcIt->second];
+                if (!calledFunc.resultTypes.empty() && calledFunc.resultTypes[0] == wasm::Type::i32) {
+                    // Function returns a record (i32 pointer)
+                    auto recordTypeIt = recordTypes.find(recordIt->second.recordType);
+                    if (recordTypeIt != recordTypes.end()) {
+                        int recordSize = recordTypeIt->second.totalSize;
+                        std::cout << "  📊 Record size: " << recordSize << " bytes" << std::endl;
+                        
+                        // Store function call result in temp local
+                        wasm::Index tempLocalIndex = nextLocalIndex - 2;
+                        std::cout << "  📊 Using temp local index " << tempLocalIndex << " for function result" << std::endl;
+                        
+                        // Get destination address (local record variable)
+                        wasm::Expression* dstAddr;
+                        auto localIt = localVarIndices.find(name);
+                        if (localIt != localVarIndices.end()) {
+                            dstAddr = builder.makeLocalGet(localIt->second, wasm::Type::i32);
+                            std::cout << "  📊 Destination address from local: " << localIt->second << std::endl;
+                        } else {
+                            dstAddr = emitRecordBaseAddress(name);
+                            std::cout << "  📊 Destination address from base: " << recordIt->second.baseOffset << std::endl;
+                        }
+                        
+                        // Copy record byte by byte
+                        std::vector<wasm::Expression*> copyExprs;
+                        copyExprs.push_back(builder.makeLocalSet(tempLocalIndex, funcCall));
+                        wasm::Expression* srcAddr = builder.makeLocalGet(tempLocalIndex, wasm::Type::i32);
+                        
+                        for (int offset = 0; offset < recordSize; offset += 4) {
+                            int bytesToCopy = std::min(4, recordSize - offset);
+                            wasm::Expression* srcOffset = builder.makeBinary(
+                                wasm::AddInt32, srcAddr, builder.makeConst(wasm::Literal(offset))
+                            );
+                            wasm::Expression* dstOffset = builder.makeBinary(
+                                wasm::AddInt32, dstAddr, builder.makeConst(wasm::Literal(offset))
+                            );
+                            
+                            wasm::Expression* value = builder.makeLoad(
+                                bytesToCopy, false, 0, 0, srcOffset, 
+                                bytesToCopy == 8 ? wasm::Type::f64 : wasm::Type::i32, 
+                                wasm::Name("memory")
+                            );
+                            copyExprs.push_back(builder.makeStore(
+                                bytesToCopy, 0, 0, dstOffset, value,
+                                bytesToCopy == 8 ? wasm::Type::f64 : wasm::Type::i32,
+                                wasm::Name("memory")
+                            ));
+                        }
+                        
+                        if (!copyExprs.empty()) {
+                            wasm::Block* copyBlock = builder.makeBlock("copy_record_init", copyExprs);
+                            copyBlock->finalize(wasm::Type::none);
+                            body.push_back(copyBlock);
+                            std::cout << "  ✅ Created record copy block with " << copyExprs.size() << " operations" << std::endl;
+                            return;
+                        }
+                    }
+                }
+            }
+        } else {
+            // No initializer - just initialize with address
+            wasm::Expression* addr = builder.makeConst(wasm::Literal(recordIt->second.baseOffset));
+            body.push_back(emitLocalSet(name, addr));
+            std::cout << "  ✅ Initialized record variable with address " << recordIt->second.baseOffset << std::endl;
+            return;
+        }
     }
     
-    // Regular variable declaration - initialize to 0 if no initializer
+    // Regular variable declaration - handle both "var x is value" and "var x: type is value"
     wasm::Expression* initExpr = nullptr;
-    if (decl->children.size() >= 2 && decl->children[1]) {
+    std::shared_ptr<ASTNode> typeNode = nullptr;
+    std::shared_ptr<ASTNode> initializer = nullptr;
+    
+    // Determine which child is the type and which is the initializer
+    if (decl->children.size() >= 1) {
+        auto firstChild = decl->children[0];
+        if (firstChild) {
+            if (firstChild->type == ASTNodeType::PRIMITIVE_TYPE ||
+                firstChild->type == ASTNodeType::USER_TYPE ||
+                firstChild->type == ASTNodeType::ARRAY_TYPE) {
+                // First child is a type node: "var x: type is value"
+                typeNode = firstChild;
+                std::cout << "  ✅ Found type node: " << tname(typeNode->type);
+                if (typeNode->type == ASTNodeType::PRIMITIVE_TYPE || typeNode->type == ASTNodeType::USER_TYPE) {
+                    std::cout << " (" << typeNode->value << ")";
+                }
+                std::cout << std::endl;
+                
+                if (decl->children.size() >= 2 && decl->children[1]) {
+                    initializer = decl->children[1];
+                    std::cout << "  ✅ Found initializer at index 1: " << tname(initializer->type) << std::endl;
+                }
+            } else {
+                // First child is the initializer: "var x is value" (no explicit type)
+                initializer = firstChild;
+                std::cout << "  ✅ Found initializer at index 0 (no type): " << tname(initializer->type) << std::endl;
+            }
+        }
+    }
+    
+    if (initializer) {
         // Has initializer
-        auto initializer = decl->children[1];
+        std::cout << "  🔧 Generating expression for initializer..." << std::endl;
         initExpr = generateExpression(initializer, F);
+        std::cout << "  ✅ Generated initializer expression (type=" << initExpr->type << ")" << std::endl;
     } else {
         // No initializer - initialize to 0 based on type
         wasm::Type varType = wasm::Type::i32;
-        if (!decl->children.empty() && decl->children[0]) {
-            auto typeNode = decl->children[0];
+        if (typeNode) {
             if (typeNode->type == ASTNodeType::PRIMITIVE_TYPE) {
                 varType = mapPrimitiveToWasm(typeNode->value);
             } else if (typeNode->type == ASTNodeType::USER_TYPE) {
@@ -683,8 +894,9 @@ void WasmCompiler::generateVarDeclaration(std::vector<wasm::Expression*>& body,
     
     // Determine source and target types for conversion
     ValueType sourceType = ValueType::INTEGER; // Default
-    if (decl->children.size() >= 2 && decl->children[1]) {
-        sourceType = getExpressionType(decl->children[1], F);
+    if (initializer) {
+        sourceType = getExpressionType(initializer, F);
+        std::cout << "  📊 Source type from initializer: " << (int)sourceType << std::endl;
     } else {
         // No initializer - source type matches target type (both 0)
         if (initExpr->type == wasm::Type::f64) {
@@ -692,10 +904,11 @@ void WasmCompiler::generateVarDeclaration(std::vector<wasm::Expression*>& body,
         } else {
             sourceType = ValueType::INTEGER;
         }
+        std::cout << "  📊 Source type (default): " << (int)sourceType << std::endl;
     }
+    
     ValueType targetType = ValueType::UNKNOWN;
-    if (!decl->children.empty() && decl->children[0]) {
-        auto typeNode = decl->children[0];
+    if (typeNode) {
         if (typeNode->type == ASTNodeType::PRIMITIVE_TYPE) {
             if (typeNode->value == "integer") targetType = ValueType::INTEGER;
             else if (typeNode->value == "real") targetType = ValueType::REAL;
@@ -709,13 +922,25 @@ void WasmCompiler::generateVarDeclaration(std::vector<wasm::Expression*>& body,
                 else if (resolvedType->value == "boolean") targetType = ValueType::BOOLEAN;
             }
         }
+        std::cout << "  📊 Target type from type node: " << (int)targetType << std::endl;
+    } else {
+        // No explicit type - infer from initializer
+        if (initializer) {
+            targetType = sourceType; // Use source type as target
+            std::cout << "  📊 No explicit type, inferring from initializer: " << (int)targetType << std::endl;
+        } else {
+            targetType = ValueType::INTEGER; // Default to integer
+            std::cout << "  📊 No type and no initializer, defaulting to INTEGER" << std::endl;
+        }
     }
     
     if (targetType != ValueType::UNKNOWN && sourceType != targetType) {
+        std::cout << "  🔧 Converting from " << (int)sourceType << " to " << (int)targetType << std::endl;
         initExpr = emitTypeConversion(initExpr, sourceType, targetType);
     }
     
     body.push_back(emitLocalSet(name, initExpr));
+    std::cout << "✅ generateVarDeclaration: Completed initialization of variable '" << name << "'" << std::endl;
 }
 
 // Helper function to inline record copy blocks
