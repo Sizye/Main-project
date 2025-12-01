@@ -1,0 +1,33 @@
+type Employee is record
+    var id: integer;
+    var name: array[50] integer;
+    var salary: real;
+    var isActive: boolean;
+end;
+
+type Department is record
+    var name: array[30] integer;
+    var employees: array[20] Employee;
+    var budget: Employee;
+end;
+
+
+var company: Department;
+var unusedGlobal: integer;
+
+routine initializeCompany() is
+    var i: integer;
+    var j: integer;
+    var writeOnlyLocal: real;
+    var sdf: Employee;
+    sdf.id := 3;
+    company.budget := sdf;
+end
+
+
+routine main(): integer is
+    initializeCompany();
+    var unusedResult: integer;
+    unusedResult := 42;
+    return company.budget.id;
+end

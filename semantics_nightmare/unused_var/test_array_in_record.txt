@@ -1,0 +1,29 @@
+type Employee is record
+    var id: integer;
+    var name: array[50] integer;
+    var salary: real;
+    var isActive: boolean;
+end;
+
+type Department is record
+    var name: array[30] integer;
+    var employees: array[20] Employee;
+    var budget: real;
+end;
+
+var company: Department;
+
+routine initializeCompany() is
+    var i: integer;
+    for i in 1..10 loop
+        company.employees[i].id := i * 100;
+    end
+    
+end
+
+routine main(): integer is
+    initializeCompany();
+    var unusedResult: integer;
+    unusedResult := 42;
+    return company.employees[1].id;
+end
