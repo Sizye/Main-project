@@ -486,14 +486,41 @@ void WasmCompiler::collectAllVariableDeclarations(std::shared_ptr<ASTNode> node,
     }
 }
 
+// Helper to collect all loop variables from FOR_LOOP nodes
+void WasmCompiler::collectAllLoopVariables(std::shared_ptr<ASTNode> node,
+                                            std::set<std::string>& loopVars,
+                                            bool insideBody) {
+    if (!node) return;
+    
+    bool nowInsideBody = insideBody || (node->type == ASTNodeType::BODY);
+    
+    if (node->type == ASTNodeType::FOR_LOOP && nowInsideBody) {
+        const std::string& loopVar = node->value;
+        if (!loopVar.empty()) {
+            std::cout << "🔍 Found loop variable: " << loopVar << std::endl;
+            loopVars.insert(loopVar);
+        }
+    }
+    
+    if (node->type == ASTNodeType::RECORD_TYPE || node->type == ASTNodeType::TYPE_DECL) {
+        return;
+    }
+    
+    for (auto& child : node->children) {
+        collectAllLoopVariables(child, loopVars, nowInsideBody);
+    }
+}
+
 std::vector<wasm::Type> WasmCompiler::analyzeLocalVariables(const FuncInfo& F) {
     std::vector<wasm::Type> locals;
+    std::cout << "🔍 analyzeLocalVariables: Starting analysis for function " << F.name << std::endl;
 
     std::shared_ptr<ASTNode> bodyNode = nullptr;
     for (auto& ch : F.node->children) {
         if (ch && ch->type == ASTNodeType::BODY) { bodyNode = ch; break; }
     }
     if (!bodyNode) {
+        std::cout << "⚠️ No body node found, adding 2 temp locals" << std::endl;
         locals.push_back(wasm::Type::i32);
         locals.push_back(wasm::Type::i32);
         return locals;
@@ -501,6 +528,28 @@ std::vector<wasm::Type> WasmCompiler::analyzeLocalVariables(const FuncInfo& F) {
 
     std::vector<std::shared_ptr<ASTNode>> allVarDecls;
     collectAllVariableDeclarations(bodyNode, allVarDecls, true);
+    std::cout << "📊 Found " << allVarDecls.size() << " variable declarations" << std::endl;
+
+    // Collect all loop variables
+    std::set<std::string> loopVars;
+    collectAllLoopVariables(bodyNode, loopVars, true);
+    std::cout << "📊 Found " << loopVars.size() << " loop variables: ";
+    for (const auto& lv : loopVars) {
+        std::cout << lv << " ";
+    }
+    std::cout << std::endl;
+
+    // First, register all loop variables as locals (they're always i32)
+    for (const auto& loopVar : loopVars) {
+        if (localVarIndices.count(loopVar)) {
+            std::cout << "  ⚠️ Loop variable " << loopVar << " already registered, skipping" << std::endl;
+            continue;
+        }
+        std::cout << "  ✅ Registering loop variable: " << loopVar << " as local index " << nextLocalIndex << std::endl;
+        localVarIndices[loopVar] = nextLocalIndex++;
+        localVarTypes[loopVar] = wasm::Type::i32;
+        locals.push_back(wasm::Type::i32);
+    }
 
     for (auto& s : allVarDecls) {
         if (!s || s->type != ASTNodeType::VAR_DECL) continue;
@@ -599,13 +648,51 @@ void WasmCompiler::generateVarDeclaration(std::vector<wasm::Expression*>& body,
         return;
     }
     
-    // Regular variable declaration with initializer
-    if (decl->children.size() < 2 || !decl->children[1]) return;
+    // Regular variable declaration - initialize to 0 if no initializer
+    wasm::Expression* initExpr = nullptr;
+    if (decl->children.size() >= 2 && decl->children[1]) {
+        // Has initializer
+        auto initializer = decl->children[1];
+        initExpr = generateExpression(initializer, F);
+    } else {
+        // No initializer - initialize to 0 based on type
+        wasm::Type varType = wasm::Type::i32;
+        if (!decl->children.empty() && decl->children[0]) {
+            auto typeNode = decl->children[0];
+            if (typeNode->type == ASTNodeType::PRIMITIVE_TYPE) {
+                varType = mapPrimitiveToWasm(typeNode->value);
+            } else if (typeNode->type == ASTNodeType::USER_TYPE) {
+                auto resolvedType = resolveTypeAlias(typeNode->value);
+                if (resolvedType && resolvedType->type == ASTNodeType::PRIMITIVE_TYPE) {
+                    varType = mapPrimitiveToWasm(resolvedType->value);
+                }
+            }
+        }
+        if (varType == wasm::Type::f64) {
+            initExpr = emitF64Const(0.0);
+        } else {
+            initExpr = emitI32Const(0);
+        }
+        std::cout << "  🔧 Variable '" << name << "' has no initializer, initializing to 0" << std::endl;
+    }
     
-    auto initializer = decl->children[1];
-    wasm::Expression* initExpr = generateExpression(initializer, F);
+    if (!initExpr) {
+        std::cout << "  ⚠️ Failed to create initializer for variable '" << name << "'" << std::endl;
+        return;
+    }
     
-    ValueType sourceType = getExpressionType(initializer, F);
+    // Determine source and target types for conversion
+    ValueType sourceType = ValueType::INTEGER; // Default
+    if (decl->children.size() >= 2 && decl->children[1]) {
+        sourceType = getExpressionType(decl->children[1], F);
+    } else {
+        // No initializer - source type matches target type (both 0)
+        if (initExpr->type == wasm::Type::f64) {
+            sourceType = ValueType::REAL;
+        } else {
+            sourceType = ValueType::INTEGER;
+        }
+    }
     ValueType targetType = ValueType::UNKNOWN;
     if (!decl->children.empty() && decl->children[0]) {
         auto typeNode = decl->children[0];
@@ -777,8 +864,9 @@ wasm::Expression* WasmCompiler::generateAssignment(std::shared_ptr<ASTNode> a,
     auto rhs = a->children[1];
     if (!lhs || !rhs) return builder.makeNop();
     
-    std::cout << "🔧 generateAssignment: lhs type=" << tname(lhs->type) 
-              << ", rhs type=" << tname(rhs->type) << std::endl;
+    std::string lhsName = (lhs->type == ASTNodeType::IDENTIFIER) ? lhs->value : "?";
+    std::cout << "🔧 generateAssignment: lhs=" << lhsName 
+              << " (type=" << tname(lhs->type) << "), rhs type=" << tname(rhs->type) << std::endl;
     
     ValueType targetType = getExpressionType(lhs, F);
     ValueType sourceType = getExpressionType(rhs, F);
@@ -1221,12 +1309,14 @@ wasm::Expression* WasmCompiler::generateWhileLoop(std::shared_ptr<ASTNode> w,
 
 wasm::Expression* WasmCompiler::generateForLoop(std::shared_ptr<ASTNode> forNode,
                                    const FuncInfo& F) {
+    std::cout << "🔧 generateForLoop: Starting for loop generation" << std::endl;
     if (!forNode) {
         std::cout << "⚠️ Malformed FOR_LOOP node\n";
         return builder.makeNop();
     }
 
     const std::string iv = forNode->value;
+    std::cout << "🔧 generateForLoop: Loop variable name = '" << iv << "'" << std::endl;
 
     std::shared_ptr<ASTNode> rangeNode = nullptr;
     std::shared_ptr<ASTNode> loopBody = nullptr;
@@ -1236,10 +1326,13 @@ wasm::Expression* WasmCompiler::generateForLoop(std::shared_ptr<ASTNode> forNode
         if (!ch) continue;
         if (ch->type == ASTNodeType::RANGE) {
             rangeNode = ch;
+            std::cout << "  ✅ Found RANGE node" << std::endl;
         } else if (ch->type == ASTNodeType::BODY) {
             loopBody = ch;
+            std::cout << "  ✅ Found BODY node with " << ch->children.size() << " children" << std::endl;
         } else if (ch->type == ASTNodeType::IDENTIFIER && ch->value == "reverse") {
             isReverse = true;
+            std::cout << "  ✅ Found reverse flag" << std::endl;
         }
     }
 
@@ -1248,17 +1341,31 @@ wasm::Expression* WasmCompiler::generateForLoop(std::shared_ptr<ASTNode> forNode
         return builder.makeNop();
     }
 
+    std::cout << "🔍 Checking if loop variable '" << iv << "' is in localVarIndices..." << std::endl;
+    std::cout << "  📊 Current localVarIndices size: " << localVarIndices.size() << std::endl;
+    for (const auto& [name, idx] : localVarIndices) {
+        std::cout << "    - " << name << " -> " << idx << std::endl;
+    }
+    
     auto it = localVarIndices.find(iv);
     if (it == localVarIndices.end()) {
-        std::cout << "⚠️ Loop variable not declared as local: " << iv << "\n";
+        std::cout << "❌ Loop variable not declared as local: " << iv << "\n";
+        std::cout << "  Available locals: ";
+        for (const auto& [name, idx] : localVarIndices) {
+            std::cout << name << " ";
+        }
+        std::cout << std::endl;
         return builder.makeNop();
     }
     uint32_t ivIdx = static_cast<uint32_t>(it->second);
+    std::cout << "✅ Loop variable '" << iv << "' found at local index " << ivIdx << std::endl;
 
     std::shared_ptr<ASTNode> startExpr = nullptr, endExpr = nullptr;
     if (rangeNode->children.size() >= 2) {
         startExpr = rangeNode->children[0];
         endExpr = rangeNode->children[1];
+        std::cout << "  📊 Range: startExpr type=" << tname(startExpr->type) 
+                  << ", endExpr type=" << tname(endExpr->type) << std::endl;
     }
     if (!endExpr) {
         std::cout << "⚠️ FOR_LOOP missing range end\n";
@@ -1267,32 +1374,53 @@ wasm::Expression* WasmCompiler::generateForLoop(std::shared_ptr<ASTNode> forNode
 
     wasm::Expression* startVal = startExpr ? generateExpression(startExpr, F) : emitI32Const(0);
     wasm::Expression* endVal = generateExpression(endExpr, F);
+    std::cout << "  📊 Generated startVal (type=" << startVal->type 
+              << "), endVal (type=" << endVal->type << ")" << std::endl;
     
     // Initialize loop variable
     wasm::Expression* init = emitLocalSet(iv, startVal);
+    std::cout << "  ✅ Created initialization expression for loop variable" << std::endl;
     
     // Loop condition and body
     std::vector<wasm::Expression*> bodyExprs;
     if (loopBody && loopBody->type == ASTNodeType::BODY) {
-    for (auto& s : loopBody->children) {
-        if (!s) continue;
-        switch (s->type) {
-                case ASTNodeType::ASSIGNMENT: bodyExprs.push_back(generateAssignment(s, F)); break;
-                case ASTNodeType::IF_STMT: bodyExprs.push_back(generateIfStatement(s, F)); break;
-                case ASTNodeType::WHILE_LOOP: bodyExprs.push_back(generateWhileLoop(s, F)); break;
-                case ASTNodeType::FOR_LOOP: bodyExprs.push_back(generateForLoop(s, F)); break;
-                case ASTNodeType::RETURN_STMT: bodyExprs.push_back(generateReturn(s, F)); break;
+        std::cout << "  🔧 Processing loop body with " << loopBody->children.size() << " statements" << std::endl;
+        for (auto& s : loopBody->children) {
+            if (!s) continue;
+            std::cout << "    🔧 Processing statement type: " << tname(s->type) << std::endl;
+            switch (s->type) {
+                case ASTNodeType::ASSIGNMENT: 
+                    bodyExprs.push_back(generateAssignment(s, F)); 
+                    std::cout << "      ✅ Added assignment to body" << std::endl;
+                    break;
+                case ASTNodeType::IF_STMT: 
+                    bodyExprs.push_back(generateIfStatement(s, F)); 
+                    break;
+                case ASTNodeType::WHILE_LOOP: 
+                    bodyExprs.push_back(generateWhileLoop(s, F)); 
+                    break;
+                case ASTNodeType::FOR_LOOP: 
+                    std::cout << "      🔧 Found nested FOR_LOOP, generating..." << std::endl;
+                    bodyExprs.push_back(generateForLoop(s, F)); 
+                    std::cout << "      ✅ Added nested for loop to body" << std::endl;
+                    break;
+                case ASTNodeType::RETURN_STMT: 
+                    bodyExprs.push_back(generateReturn(s, F)); 
+                    break;
                 case ASTNodeType::VAR_DECL: {
                     std::vector<wasm::Expression*> varBody;
                     generateVarDeclaration(varBody, s, F);
                     bodyExprs.insert(bodyExprs.end(), varBody.begin(), varBody.end());
-                break;
+                    break;
                 }
-                default: break;
+                default: 
+                    std::cout << "      ⚠️ Unhandled statement type in loop body: " << tname(s->type) << std::endl;
+                    break;
             }
         }
     }
     
+    std::cout << "  📊 Loop body has " << bodyExprs.size() << " expressions" << std::endl;
     wasm::Expression* bodyBlock = bodyExprs.empty() ? builder.makeNop() :
         (bodyExprs.size() == 1 ? bodyExprs[0] : builder.makeBlock("", bodyExprs));
     
@@ -1305,32 +1433,46 @@ wasm::Expression* WasmCompiler::generateForLoop(std::shared_ptr<ASTNode> forNode
             emitI32Const(1)
         )
     );
+    std::cout << "  ✅ Created step expression (increment/decrement)" << std::endl;
     
-    // Condition: forward break if i >= end, reverse break if i < end
-    // For forward loop (0..10): continue while i < end, break when i >= end
-    // For reverse loop (10..0): continue while i >= end, break when i < end
+    // Condition: forward break if i > end, reverse break if i < end
+    // For forward loop (10..14): continue while i <= end, break when i > end
+    //   - We want to execute when i = 10, 11, 12, 13, 14
+    //   - So we break when i > 14 (i.e., i = 15)
+    // For reverse loop (14..10): continue while i >= end, break when i < end
+    //   - We want to execute when i = 14, 13, 12, 11, 10
+    //   - So we break when i < 10 (i.e., i = 9)
     wasm::Expression* cond = builder.makeBinary(
-        isReverse ? wasm::LtSInt32 : wasm::GeSInt32,
+        isReverse ? wasm::LtSInt32 : wasm::GtSInt32,
         emitLocalGet(iv),
         endVal
     );
+    std::cout << "  ✅ Created condition expression (isReverse=" << isReverse 
+              << ", breaks when i " << (isReverse ? "<" : ">") << " end)" << std::endl;
     
     // Wrap loop in a block so we can break out of it
-    std::string blockName = "for_block";
-    std::string loopName = "for_loop";
+    std::string blockName = "for_block_" + iv;
+    std::string loopName = "for_loop_" + iv;
+    std::cout << "  📊 Block name: " << blockName << ", Loop name: " << loopName << std::endl;
     
     std::vector<wasm::Expression*> loopExprs;
     // Check condition at START of iteration: break out of block if done
     loopExprs.push_back(builder.makeIf(cond, builder.makeBreak(blockName, nullptr, nullptr)));
+    std::cout << "  ✅ Added condition check to loop" << std::endl;
     // Execute body
     loopExprs.push_back(bodyBlock);
+    std::cout << "  ✅ Added body block to loop" << std::endl;
     // Step (increment/decrement)
     loopExprs.push_back(step);
+    std::cout << "  ✅ Added step to loop" << std::endl;
     // Continue loop by breaking to loop name (this continues the loop)
     loopExprs.push_back(builder.makeBreak(loopName, nullptr, nullptr));
+    std::cout << "  ✅ Added continue break to loop" << std::endl;
     
     wasm::Expression* loop = builder.makeLoop(loopName, builder.makeBlock("", loopExprs));
-    return builder.makeBlock(blockName, {init, loop});
+    wasm::Expression* result = builder.makeBlock(blockName, {init, loop});
+    std::cout << "✅ generateForLoop: Completed for loop '" << iv << "'" << std::endl;
+    return result;
 }
 
 wasm::Expression* WasmCompiler::generateReturn(std::shared_ptr<ASTNode> r,

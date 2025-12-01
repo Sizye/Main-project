@@ -3,7 +3,10 @@ routine main() : integer is
     var i: integer;
  
     for i in 10..14 loop
-        result := result + 1;
+        result := result + i;
+        for j in 0..5 loop
+            result := result + 1;
+        end
     end
     return result;
 end

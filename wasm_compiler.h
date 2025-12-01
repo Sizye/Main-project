@@ -8,6 +8,7 @@
 #include <unordered_map>
 #include <vector>
 #include <memory>
+#include <set>
 
 // Binaryen includes
 #include <wasm.h>
@@ -113,6 +114,9 @@ private:
     void collectAllVariableDeclarations(std::shared_ptr<ASTNode> node,
                                        std::vector<std::shared_ptr<ASTNode>>& varDecls,
                                        bool insideBody = false);
+    void collectAllLoopVariables(std::shared_ptr<ASTNode> node,
+                                std::set<std::string>& loopVars,
+                                bool insideBody = false);
     std::vector<wasm::Type> analyzeLocalVariables(const FuncInfo& F);
     
     // Helper to resolve type alias (e.g., "myId" -> "real")
