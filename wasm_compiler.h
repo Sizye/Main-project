@@ -168,16 +168,11 @@ private:
     wasm::Expression* emitLocalGet(const std::string& name);
     wasm::Expression* emitRecordBaseAddress(const std::string& name);
     wasm::Expression* emitLocalSet(const std::string& name, wasm::Expression* value);
-    wasm::Expression* emitI32Load(uint32_t offset);
-    wasm::Expression* emitI32Store(uint32_t offset, wasm::Expression* value);
-    wasm::Expression* emitF64Load(uint32_t offset);
-    wasm::Expression* emitF64Store(uint32_t offset, wasm::Expression* value);
     
     // Memory section setup
     void setupMemory();
 
     // For array type handling
-    wasm::Type getArrayType(std::shared_ptr<ASTNode> arrayTypeNode);
     std::tuple<wasm::Type, std::string, int> analyzeArrayType(std::shared_ptr<ASTNode> arrayTypeNode);
     
     // Array and member access generation
@@ -193,13 +188,6 @@ private:
     bool resolveRecordTypeForIdentifier(const std::string& name,
                                         const FuncInfo& F,
                                         std::string& recordTypeOut) const;
-    std::tuple<int, wasm::Type, int> resolveArrayMember(std::shared_ptr<ASTNode> memberAccess,
-                                                       const FuncInfo& F);
-    wasm::Expression* generateArrayAccessForRecord(std::shared_ptr<ASTNode> arrayAccess,
-                                                  const FuncInfo& F);
-    std::tuple<int, wasm::Type, int> resolveArrayAccessMember(std::shared_ptr<ASTNode> arrayAccess,
-                                                              const std::string& fieldName,
-                                                              const FuncInfo& F);
     wasm::Expression* generateSimpleArrayAccess(std::shared_ptr<ASTNode> arrayRef,
                                                 std::shared_ptr<ASTNode> indexExpr,
                                                 const FuncInfo& F);
@@ -224,8 +212,6 @@ private:
     wasm::Expression* generatePrintStatement(std::shared_ptr<ASTNode> printStmt,
                                            const FuncInfo& F);
     
-    // Helper to convert ValueType to Binaryen Type
-    wasm::Type valueTypeToWasmType(ValueType vt);
     
     // Print runtime helpers
     void detectPrintStatements();
