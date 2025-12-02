@@ -1,8 +1,12 @@
 var glob: integer is 4;
 
-routine main(): integer is
-  var i: integer;
+routine printt() is
+  print 910;
+end
+
+routine main() is
+  var i: real;
   i := 42 + 4.345;
-  print i;
-  return i;
+  var j is 9001.11;
+  printt();
 end

@@ -51,6 +51,11 @@ private:
     
     // Track if print statements are used
     bool hasPrintStatements;
+    int printBufferOffset;
+    int printBufferSize;
+    int printIovecOffset;
+    int printWrittenCountOffset;
+    bool printRuntimeMemoryReserved;
 
     // Array variable tracking
     struct ArrayInfo {
@@ -95,7 +100,17 @@ private:
     std::unordered_map<std::string, ArrayInfo> globalArrays;  // Global arrays
 
 public:
-    WasmCompiler() : module(std::make_unique<wasm::Module>()), builder(*module), nextLocalIndex(0), globalMemoryOffset(0) {}
+    WasmCompiler() 
+        : module(std::make_unique<wasm::Module>()),
+          builder(*module),
+          nextLocalIndex(0),
+          hasPrintStatements(false),
+          printBufferOffset(-1),
+          printBufferSize(0),
+          printIovecOffset(-1),
+          printWrittenCountOffset(-1),
+          printRuntimeMemoryReserved(false),
+          globalMemoryOffset(0) {}
 
     // Compile full AST into a single-module WASM file exporting `main`
     bool compile(std::shared_ptr<ASTNode> program, const std::string& filename);
@@ -212,8 +227,19 @@ private:
     // Helper to convert ValueType to Binaryen Type
     wasm::Type valueTypeToWasmType(ValueType vt);
     
-    // Add imported print functions
+    // Print runtime helpers
+    void detectPrintStatements();
+    void reservePrintRuntimeMemory();
     void addPrintImports();
+    void addWasiFdWriteImport();
+    void ensureMemoryExport();
+    wasm::Function* buildPrintRuntimeFlushFunction();
+    wasm::Function* buildPrintWriteCharFunction();
+    wasm::Function* buildPrintPositiveU64Function();
+    wasm::Function* buildPrintI32Function();
+    wasm::Function* buildPrintF64Function();
+    wasm::Expression* makeStoreI32Const(int32_t offset, wasm::Expression* value);
+    wasm::Expression* makeStoreI32Const(int32_t offset, int32_t literal);
 };
 
 #endif // WASM_COMPILER_H

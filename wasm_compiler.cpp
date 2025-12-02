@@ -4,6 +4,7 @@
 #include <cstring>
 #include <cmath>
 #include <sstream>
+#include <limits>
 
 // ========== Debug helper ==========
 static const char* tname(ASTNodeType t) {
@@ -63,32 +64,13 @@ bool WasmCompiler::compile(std::shared_ptr<ASTNode> program,
         return false;
     }
 
-    // Setup memory
-    setupMemory();
-    
-    // Track print statement usage - check if any function uses print statements
-    hasPrintStatements = false;
-    for (auto& F : funcs) {
-        std::shared_ptr<ASTNode> bodyNode = nullptr;
-        for (auto& ch : F.node->children) {
-            if (ch && ch->type == ASTNodeType::BODY) { bodyNode = ch; break; }
-        }
-        if (bodyNode) {
-            // Recursively check for print statements in the body
-            std::function<bool(std::shared_ptr<ASTNode>)> checkForPrint = [&](std::shared_ptr<ASTNode> node) -> bool {
-                if (!node) return false;
-                if (node->type == ASTNodeType::PRINT_STMT) return true;
-                for (auto& child : node->children) {
-                    if (checkForPrint(child)) return true;
-                }
-                return false;
-            };
-            if (checkForPrint(bodyNode)) {
-                hasPrintStatements = true;
-                break;
-            }
-        }
+    detectPrintStatements();
+    if (hasPrintStatements) {
+        reservePrintRuntimeMemory();
     }
+
+    // Setup memory (after reserving any runtime scratch buffers)
+    setupMemory();
     
     // Only add print imports if print statements are actually used
     if (hasPrintStatements) {
@@ -223,6 +205,76 @@ bool WasmCompiler::compile(std::shared_ptr<ASTNode> program,
     std::cout << "✅ WROTE WASM module using Binaryen\n";
     std::cout << "💡 You can run it with: wasmtime --invoke main " << filename << "\n";
     return true;
+}
+
+void WasmCompiler::detectPrintStatements() {
+    std::cout << "🔍 Checking routines for print statements..." << std::endl;
+    hasPrintStatements = false;
+    
+    for (auto& F : funcs) {
+        std::shared_ptr<ASTNode> bodyNode = nullptr;
+        for (auto& ch : F.node->children) {
+            if (ch && ch->type == ASTNodeType::BODY) {
+                bodyNode = ch;
+                break;
+            }
+        }
+        
+        if (!bodyNode) {
+            continue;
+        }
+        
+        std::function<bool(std::shared_ptr<ASTNode>)> hasPrint = [&](std::shared_ptr<ASTNode> node) -> bool {
+            if (!node) return false;
+            if (node->type == ASTNodeType::PRINT_STMT) return true;
+            for (auto& child : node->children) {
+                if (hasPrint(child)) return true;
+            }
+            return false;
+        };
+        
+        if (hasPrint(bodyNode)) {
+            std::cout << "  ✅ Found print statement inside routine '" << F.name << "'" << std::endl;
+            hasPrintStatements = true;
+            break;
+        }
+    }
+    
+    if (!hasPrintStatements) {
+        std::cout << "  ℹ️ No print statements detected in user code." << std::endl;
+    }
+}
+
+void WasmCompiler::reservePrintRuntimeMemory() {
+    if (printRuntimeMemoryReserved) {
+        std::cout << "  ℹ️ Print runtime memory already reserved at offset "
+                  << printBufferOffset << std::endl;
+        return;
+    }
+    
+    auto align16 = [](int value) {
+        return (value + 15) & ~15;
+    };
+    
+    globalMemoryOffset = align16(globalMemoryOffset);
+    printBufferSize = 64;
+    printBufferOffset = globalMemoryOffset;
+    globalMemoryOffset += printBufferSize;
+    
+    globalMemoryOffset = align16(globalMemoryOffset);
+    printIovecOffset = globalMemoryOffset;
+    globalMemoryOffset += 8;
+    
+    globalMemoryOffset = align16(globalMemoryOffset);
+    printWrittenCountOffset = globalMemoryOffset;
+    globalMemoryOffset += 4;
+    
+    printRuntimeMemoryReserved = true;
+    
+    std::cout << "🧩 Reserved print runtime memory:\n"
+              << "    • buffer @" << printBufferOffset << " (" << printBufferSize << " bytes)\n"
+              << "    • iovec  @" << printIovecOffset << "\n"
+              << "    • bytes-written @" << printWrittenCountOffset << std::endl;
 }
 
 // ======================================================================
@@ -2425,6 +2477,15 @@ wasm::Expression* WasmCompiler::emitI32Store(uint32_t offset, wasm::Expression* 
     return builder.makeStore(4, 0, 0, addr, value, wasm::Type::i32, wasm::Name("memory"));
 }
 
+wasm::Expression* WasmCompiler::makeStoreI32Const(int32_t offset, wasm::Expression* value) {
+    wasm::Expression* addr = builder.makeConst(wasm::Literal(offset));
+    return builder.makeStore(4, 0, 0, addr, value, wasm::Type::i32, wasm::Name("memory"));
+}
+
+wasm::Expression* WasmCompiler::makeStoreI32Const(int32_t offset, int32_t literal) {
+    return makeStoreI32Const(offset, builder.makeConst(wasm::Literal(literal)));
+}
+
 wasm::Expression* WasmCompiler::emitF64Load(uint32_t offset) {
     wasm::Expression* addr = builder.makeConst(wasm::Literal(static_cast<int32_t>(offset)));
     return builder.makeLoad(8, false, 0, 0, addr, wasm::Type::f64, wasm::Name("memory"));
@@ -2454,6 +2515,26 @@ void WasmCompiler::setupMemory() {
         mem->max = totalMemoryPages;
         module->addMemory(std::move(mem));
     }
+    
+    ensureMemoryExport();
+}
+
+void WasmCompiler::ensureMemoryExport() {
+    if (module->memories.empty()) {
+        return;
+    }
+    
+    if (module->getExportOrNull(wasm::Name("memory"))) {
+        return;
+    }
+    
+    auto memExport = new wasm::Export(
+        wasm::Name("memory"),
+        wasm::ExternalKind::Memory,
+        wasm::Name("memory")
+    );
+    module->addExport(memExport);
+    std::cout << "🧾 Exported linear memory as 'memory' for WASI" << std::endl;
 }
 
 // ======================================================================
@@ -3652,32 +3733,481 @@ bool WasmCompiler::validateAssignmentConversion(ValueType fromType, ValueType to
 }
 
 void WasmCompiler::addPrintImports() {
-    // Add print_i32 import
-    auto printI32 = std::make_unique<wasm::Function>();
-    printI32->name = wasm::Name("print_i32");
-    printI32->module = wasm::Name("env");
-    printI32->base = wasm::Name("print_i32");
-    wasm::Signature sigI32(wasm::Type::i32, wasm::Type::none);
-    printI32->type = wasm::Type(sigI32, wasm::NonNullable, wasm::Inexact);
-    module->addFunction(std::move(printI32));
+    std::cout << "🖨️ Installing print runtime (WASI fd_write + helpers)" << std::endl;
+    addWasiFdWriteImport();
     
-    // Add print_f64 import
-    auto printF64 = std::make_unique<wasm::Function>();
-    printF64->name = wasm::Name("print_f64");
-    printF64->module = wasm::Name("env");
-    printF64->base = wasm::Name("print_f64");
-    wasm::Signature sigF64(wasm::Type::f64, wasm::Type::none);
-    printF64->type = wasm::Type(sigF64, wasm::NonNullable, wasm::Inexact);
-    module->addFunction(std::move(printF64));
+    auto ensureHelper = [&](const char* name, auto builderFn) {
+        if (module->getFunctionOrNull(wasm::Name(name))) {
+            std::cout << "    • Helper '" << name << "' already present" << std::endl;
+        } else {
+            module->addFunction(builderFn());
+            std::cout << "    • Added helper '" << name << "'" << std::endl;
+        }
+    };
     
-    // Add print_string import (for string literals)
-    auto printString = std::make_unique<wasm::Function>();
-    printString->name = wasm::Name("print_string");
-    printString->module = wasm::Name("env");
-    printString->base = wasm::Name("print_string");
-    wasm::Signature sigString(wasm::Type::i32, wasm::Type::none); // i32 is pointer to string in memory
-    printString->type = wasm::Type(sigString, wasm::NonNullable, wasm::Inexact);
-    module->addFunction(std::move(printString));
+    ensureHelper("__print_runtime_flush", [&]() { return buildPrintRuntimeFlushFunction(); });
+    ensureHelper("__print_runtime_write_char", [&]() { return buildPrintWriteCharFunction(); });
+    ensureHelper("__print_runtime_print_u64", [&]() { return buildPrintPositiveU64Function(); });
+    ensureHelper("print_i32", [&]() { return buildPrintI32Function(); });
+    ensureHelper("print_f64", [&]() { return buildPrintF64Function(); });
+}
+
+void WasmCompiler::addWasiFdWriteImport() {
+    if (module->getFunctionOrNull(wasm::Name("__wasi_fd_write"))) {
+        std::cout << "    • WASI fd_write import already available" << std::endl;
+        return;
+    }
+    
+    auto fdWrite = std::make_unique<wasm::Function>();
+    fdWrite->name = wasm::Name("__wasi_fd_write");
+    fdWrite->module = wasm::Name("wasi_snapshot_preview1");
+    fdWrite->base = wasm::Name("fd_write");
+    
+    wasm::Signature sig;
+    sig.params = {wasm::Type::i32, wasm::Type::i32, wasm::Type::i32, wasm::Type::i32};
+    sig.results = wasm::Type::i32;
+    fdWrite->type = wasm::Type(sig, wasm::NonNullable, wasm::Inexact);
+    
+    module->addFunction(std::move(fdWrite));
+    std::cout << "    • Imported wasi_snapshot_preview1.fd_write" << std::endl;
+}
+
+wasm::Function* WasmCompiler::buildPrintRuntimeFlushFunction() {
+    auto func = new wasm::Function();
+    func->name = wasm::Name("__print_runtime_flush");
+    
+    wasm::Signature sig;
+    sig.params = {wasm::Type::i32, wasm::Type::i32}; // ptr, len
+    sig.results = wasm::Type::none;
+    func->type = wasm::Type(sig, wasm::NonNullable, wasm::Exact);
+    
+    std::vector<wasm::Expression*> exprs;
+    exprs.push_back(makeStoreI32Const(printIovecOffset, builder.makeLocalGet(0, wasm::Type::i32)));
+    exprs.push_back(makeStoreI32Const(printIovecOffset + 4, builder.makeLocalGet(1, wasm::Type::i32)));
+    exprs.push_back(makeStoreI32Const(printWrittenCountOffset, 0));
+    
+    exprs.push_back(
+        builder.makeDrop(
+            builder.makeCall(
+                wasm::Name("__wasi_fd_write"),
+                {
+                    builder.makeConst(wasm::Literal(int32_t(1))), // stdout
+                    builder.makeConst(wasm::Literal(printIovecOffset)),
+                    builder.makeConst(wasm::Literal(int32_t(1))),
+                    builder.makeConst(wasm::Literal(printWrittenCountOffset))
+                },
+                wasm::Type::i32
+            )
+        )
+    );
+    
+    func->body = builder.makeBlock("", exprs);
+    return func;
+}
+
+wasm::Function* WasmCompiler::buildPrintWriteCharFunction() {
+    auto func = new wasm::Function();
+    func->name = wasm::Name("__print_runtime_write_char");
+    
+    wasm::Signature sig;
+    sig.params = {wasm::Type::i32};
+    sig.results = wasm::Type::none;
+    func->type = wasm::Type(sig, wasm::NonNullable, wasm::Exact);
+    
+    std::vector<wasm::Expression*> exprs;
+    exprs.push_back(
+        builder.makeStore(
+            1,
+            0,
+            0,
+            builder.makeConst(wasm::Literal(printBufferOffset)),
+            builder.makeLocalGet(0, wasm::Type::i32),
+            wasm::Type::i32,
+            wasm::Name("memory")
+        )
+    );
+    exprs.push_back(
+        builder.makeCall(
+            wasm::Name("__print_runtime_flush"),
+            {
+                builder.makeConst(wasm::Literal(printBufferOffset)),
+                builder.makeConst(wasm::Literal(int32_t(1)))
+            },
+            wasm::Type::none
+        )
+    );
+    
+    func->body = builder.makeBlock("", exprs);
+    return func;
+}
+
+wasm::Function* WasmCompiler::buildPrintPositiveU64Function() {
+    auto func = new wasm::Function();
+    func->name = wasm::Name("__print_runtime_print_u64");
+    
+    wasm::Signature sig;
+    sig.params = {wasm::Type::i64};
+    sig.results = wasm::Type::none;
+    func->type = wasm::Type(sig, wasm::NonNullable, wasm::Exact);
+    
+    func->vars = {wasm::Type::i64};
+    const wasm::Index valueIdx = 0;
+    const wasm::Index digitIdx = func->getNumParams();
+    
+    auto ten64 = builder.makeConst(wasm::Literal(int64_t(10)));
+    std::vector<wasm::Expression*> exprs;
+    
+    exprs.push_back(
+        builder.makeIf(
+            builder.makeBinary(
+                wasm::GeUInt64,
+                builder.makeLocalGet(valueIdx, wasm::Type::i64),
+                ten64
+            ),
+            builder.makeBlock("", {
+                builder.makeCall(
+                    wasm::Name("__print_runtime_print_u64"),
+                    {
+                        builder.makeBinary(
+                            wasm::DivUInt64,
+                            builder.makeLocalGet(valueIdx, wasm::Type::i64),
+                            builder.makeConst(wasm::Literal(int64_t(10)))
+                        )
+                    },
+                    wasm::Type::none
+                )
+            })
+        )
+    );
+    
+    exprs.push_back(
+        builder.makeLocalSet(
+            digitIdx,
+            builder.makeBinary(
+                wasm::RemUInt64,
+                builder.makeLocalGet(valueIdx, wasm::Type::i64),
+                builder.makeConst(wasm::Literal(int64_t(10)))
+            )
+        )
+    );
+    
+    exprs.push_back(
+        builder.makeCall(
+            wasm::Name("__print_runtime_write_char"),
+            {
+                builder.makeBinary(
+                    wasm::AddInt32,
+                    builder.makeUnary(
+                        wasm::WrapInt64,
+                        builder.makeLocalGet(digitIdx, wasm::Type::i64)
+                    ),
+                    builder.makeConst(wasm::Literal(int32_t('0')))
+                )
+            },
+            wasm::Type::none
+        )
+    );
+    
+    func->body = builder.makeBlock("", exprs);
+    return func;
+}
+
+wasm::Function* WasmCompiler::buildPrintI32Function() {
+    auto func = new wasm::Function();
+    func->name = wasm::Name("print_i32");
+    
+    wasm::Signature sig;
+    sig.params = {wasm::Type::i32};
+    sig.results = wasm::Type::none;
+    func->type = wasm::Type(sig, wasm::NonNullable, wasm::Exact);
+    func->vars = {wasm::Type::i64};
+    
+    const wasm::Index valueIdx = 0;
+    const wasm::Index value64Idx = func->getNumParams();
+    wasm::Name done("print_i32_done");
+    
+    auto makeCharCall = [&](int ch) {
+        return builder.makeCall(
+            wasm::Name("__print_runtime_write_char"),
+            {builder.makeConst(wasm::Literal(int32_t(ch)))},
+            wasm::Type::none
+        );
+    };
+    
+    std::vector<wasm::Expression*> body;
+    
+    body.push_back(
+        builder.makeLocalSet(
+            value64Idx,
+            builder.makeUnary(
+                wasm::ExtendSInt32,
+                builder.makeLocalGet(valueIdx, wasm::Type::i32)
+            )
+        )
+    );
+    
+    body.push_back(
+        builder.makeIf(
+            builder.makeBinary(
+                wasm::EqInt32,
+                builder.makeLocalGet(valueIdx, wasm::Type::i32),
+                builder.makeConst(wasm::Literal(int32_t(0)))
+            ),
+            builder.makeBlock("", {
+                makeCharCall('0'),
+                makeCharCall('\n'),
+                builder.makeBreak(done)
+            })
+        )
+    );
+    
+    body.push_back(
+        builder.makeIf(
+            builder.makeBinary(
+                wasm::LtSInt64,
+                builder.makeLocalGet(value64Idx, wasm::Type::i64),
+                builder.makeConst(wasm::Literal(int64_t(0)))
+            ),
+            builder.makeBlock("", {
+                makeCharCall('-'),
+                builder.makeLocalSet(
+                    value64Idx,
+                    builder.makeBinary(
+                        wasm::SubInt64,
+                        builder.makeConst(wasm::Literal(int64_t(0))),
+                        builder.makeLocalGet(value64Idx, wasm::Type::i64)
+                    )
+                )
+            })
+        )
+    );
+    
+    body.push_back(
+        builder.makeCall(
+            wasm::Name("__print_runtime_print_u64"),
+            {builder.makeLocalGet(value64Idx, wasm::Type::i64)},
+            wasm::Type::none
+        )
+    );
+    
+    body.push_back(makeCharCall('\n'));
+    
+    func->body = builder.makeBlock(done, body);
+    return func;
+}
+
+wasm::Function* WasmCompiler::buildPrintF64Function() {
+    auto func = new wasm::Function();
+    func->name = wasm::Name("print_f64");
+    
+    wasm::Signature sig;
+    sig.params = {wasm::Type::f64};
+    sig.results = wasm::Type::none;
+    func->type = wasm::Type(sig, wasm::NonNullable, wasm::Exact);
+    
+    func->vars = {wasm::Type::f64, wasm::Type::i64, wasm::Type::f64, wasm::Type::i32};
+    const wasm::Index valueIdx = 0;
+    const wasm::Index absIdx = func->getNumParams();
+    const wasm::Index intIdx = absIdx + 1;
+    const wasm::Index fracIdx = absIdx + 2;
+    const wasm::Index digitIdx = absIdx + 3;
+    wasm::Name done("print_f64_done");
+    
+    auto makeCharCall = [&](int ch) {
+        return builder.makeCall(
+            wasm::Name("__print_runtime_write_char"),
+            {builder.makeConst(wasm::Literal(int32_t(ch)))},
+            wasm::Type::none
+        );
+    };
+    
+    auto makeF64Const = [&](double v) {
+        return builder.makeConst(wasm::Literal(v));
+    };
+    
+    double maxSafeInt64 = static_cast<double>(std::numeric_limits<int64_t>::max());
+    
+    std::vector<wasm::Expression*> body;
+    
+    body.push_back(
+        builder.makeLocalSet(
+            absIdx,
+            builder.makeUnary(
+                wasm::AbsFloat64,
+                builder.makeLocalGet(valueIdx, wasm::Type::f64)
+            )
+        )
+    );
+    
+    body.push_back(
+        builder.makeIf(
+            builder.makeBinary(
+                wasm::NeFloat64,
+                builder.makeLocalGet(valueIdx, wasm::Type::f64),
+                builder.makeLocalGet(valueIdx, wasm::Type::f64)
+            ),
+            builder.makeBlock("", {
+                makeCharCall('n'),
+                makeCharCall('a'),
+                makeCharCall('n'),
+                makeCharCall('\n'),
+                builder.makeBreak(done)
+            })
+        )
+    );
+    
+    body.push_back(
+        builder.makeIf(
+            builder.makeBinary(
+                wasm::GeFloat64,
+                builder.makeLocalGet(absIdx, wasm::Type::f64),
+                makeF64Const(std::numeric_limits<double>::infinity())
+            ),
+            builder.makeBlock("", {
+                builder.makeIf(
+                    builder.makeBinary(
+                        wasm::LtFloat64,
+                        builder.makeLocalGet(valueIdx, wasm::Type::f64),
+                        makeF64Const(0.0)
+                    ),
+                    makeCharCall('-')
+                ),
+                makeCharCall('i'),
+                makeCharCall('n'),
+                makeCharCall('f'),
+                makeCharCall('\n'),
+                builder.makeBreak(done)
+            })
+        )
+    );
+    
+    body.push_back(
+        builder.makeIf(
+            builder.makeBinary(
+                wasm::LtFloat64,
+                builder.makeLocalGet(valueIdx, wasm::Type::f64),
+                makeF64Const(0.0)
+            ),
+            makeCharCall('-')
+        )
+    );
+    
+    body.push_back(
+        builder.makeLocalSet(
+            absIdx,
+            builder.makeIf(
+                builder.makeBinary(
+                    wasm::GtFloat64,
+                    builder.makeLocalGet(absIdx, wasm::Type::f64),
+                    makeF64Const(maxSafeInt64)
+                ),
+                makeF64Const(maxSafeInt64),
+                builder.makeLocalGet(absIdx, wasm::Type::f64)
+            )
+        )
+    );
+    
+    body.push_back(
+        builder.makeLocalSet(
+            intIdx,
+            builder.makeUnary(
+                wasm::TruncSFloat64ToInt64,
+                builder.makeLocalGet(absIdx, wasm::Type::f64)
+            )
+        )
+    );
+    
+    body.push_back(
+        builder.makeLocalSet(
+            fracIdx,
+            builder.makeBinary(
+                wasm::SubFloat64,
+                builder.makeLocalGet(absIdx, wasm::Type::f64),
+                builder.makeUnary(
+                    wasm::ConvertSInt64ToFloat64,
+                    builder.makeLocalGet(intIdx, wasm::Type::i64)
+                )
+            )
+        )
+    );
+    
+    body.push_back(
+        builder.makeIf(
+            builder.makeBinary(
+                wasm::EqInt64,
+                builder.makeLocalGet(intIdx, wasm::Type::i64),
+                builder.makeConst(wasm::Literal(int64_t(0)))
+            ),
+            makeCharCall('0'),
+            builder.makeCall(
+                wasm::Name("__print_runtime_print_u64"),
+                {builder.makeLocalGet(intIdx, wasm::Type::i64)},
+                wasm::Type::none
+            )
+        )
+    );
+    
+    body.push_back(makeCharCall('.'));
+    
+    auto emitFractionStep = [&]() {
+        std::vector<wasm::Expression*> seq;
+        seq.push_back(
+            builder.makeLocalSet(
+                fracIdx,
+                builder.makeBinary(
+                    wasm::MulFloat64,
+                    builder.makeLocalGet(fracIdx, wasm::Type::f64),
+                    makeF64Const(10.0)
+                )
+            )
+        );
+        seq.push_back(
+            builder.makeLocalSet(
+                digitIdx,
+                builder.makeUnary(
+                    wasm::TruncSFloat64ToInt32,
+                    builder.makeLocalGet(fracIdx, wasm::Type::f64)
+                )
+            )
+        );
+        seq.push_back(
+            builder.makeLocalSet(
+                fracIdx,
+                builder.makeBinary(
+                    wasm::SubFloat64,
+                    builder.makeLocalGet(fracIdx, wasm::Type::f64),
+                    builder.makeUnary(
+                        wasm::ConvertSInt32ToFloat64,
+                        builder.makeLocalGet(digitIdx, wasm::Type::i32)
+                    )
+                )
+            )
+        );
+        seq.push_back(
+            builder.makeCall(
+                wasm::Name("__print_runtime_write_char"),
+                {
+                    builder.makeBinary(
+                        wasm::AddInt32,
+                        builder.makeLocalGet(digitIdx, wasm::Type::i32),
+                        builder.makeConst(wasm::Literal(int32_t('0')))
+                    )
+                },
+                wasm::Type::none
+            )
+        );
+        return seq;
+    };
+    
+    for (int i = 0; i < 6; ++i) {
+        auto step = emitFractionStep();
+        body.insert(body.end(), step.begin(), step.end());
+    }
+    
+    body.push_back(makeCharCall('\n'));
+    
+    func->body = builder.makeBlock(done, body);
+    return func;
 }
 
 wasm::Expression* WasmCompiler::generatePrintStatement(std::shared_ptr<ASTNode> printStmt,
@@ -3692,13 +4222,34 @@ wasm::Expression* WasmCompiler::generatePrintStatement(std::shared_ptr<ASTNode> 
         if (!expr) continue;
         
         if (expr->type == ASTNodeType::LITERAL_STRING) {
-            // For string literals, we need to store the string in memory and pass the pointer
-            // For now, we'll just print the string value directly via a host function
-            // In a full implementation, we'd store the string in memory and pass the pointer
-            // For simplicity, we'll use a placeholder that prints the string
-            std::cout << "  📝 PRINT: \"" << expr->value << "\"\n";
-            // TODO: Implement proper string printing via host function
-            // For now, we'll just output to console during compilation
+            std::string literalValue = expr->value;
+            if (literalValue.size() >= 2 &&
+                ((literalValue.front() == '"' && literalValue.back() == '"') ||
+                 (literalValue.front() == '\'' && literalValue.back() == '\''))) {
+                literalValue = literalValue.substr(1, literalValue.size() - 2);
+            }
+            
+            std::cout << "  🖨️ Emitting string literal print for \"" << literalValue << "\"\n";
+            
+            std::vector<wasm::Expression*> charWrites;
+            for (unsigned char ch : literalValue) {
+                charWrites.push_back(
+                    builder.makeCall(
+                        wasm::Name("__print_runtime_write_char"),
+                        {builder.makeConst(wasm::Literal(static_cast<int32_t>(ch)))},
+                        wasm::Type::none
+                    )
+                );
+            }
+            // Append newline to match numeric printers
+            charWrites.push_back(
+                builder.makeCall(
+                    wasm::Name("__print_runtime_write_char"),
+                    {builder.makeConst(wasm::Literal(int32_t('\n')))},
+                    wasm::Type::none
+                )
+            );
+            printCalls.push_back(builder.makeBlock("", charWrites));
         } else {
             // Generate the expression value
             wasm::Expression* exprVal = generateExpression(expr, F);

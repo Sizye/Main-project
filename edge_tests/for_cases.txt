@@ -1,9 +1,7 @@
 routine main() : integer is
-    var result : integer;
-    var i: integer;
- 
-    for i in 10..14 loop
-        result := result + i;
+    var result is 0;
+    for i in 0..5 loop
+        result := result + 1;
         for j in 0..5 loop
             result := result + 1;
         end
