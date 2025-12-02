@@ -5,17 +5,16 @@ end;
 
 
 routine checkRecordPass (passed: Person): real is 
-    var asd: Person;
-    asd.id := 52.24;
-    return asd.id;
+    passed.id := 52.24;
+    return passed.id;
 end
 
     
 
-routine main(): int is
+routine main(): integer is
     var asd: Person;
     var bfd: Person;
     checkRecordPass(asd);
     checkRecordPass(bfd);
-    return checkRecordPass(asd) + checkRecordPass(bfd);
+    return asd.id + bfd.id;
 end

@@ -2963,6 +2963,44 @@ wasm::Expression* WasmCompiler::generateArrayAssignment(std::shared_ptr<ASTNode>
 // Records
 // ======================================================================
 
+bool WasmCompiler::resolveRecordTypeForIdentifier(const std::string& name,
+                                                  const FuncInfo& F,
+                                                  std::string& recordTypeOut) const {
+    auto localRecordIt = recordVariables.find(name);
+    if (localRecordIt != recordVariables.end()) {
+        recordTypeOut = localRecordIt->second.recordType;
+        return true;
+    }
+    
+    auto localIt = localVarIndices.find(name);
+    if (localIt != localVarIndices.end()) {
+        auto typeIt = localVarTypes.find(name);
+        if (typeIt != localVarTypes.end() && typeIt->second == wasm::Type::i32) {
+            std::shared_ptr<ASTNode> params = nullptr;
+            for (auto& ch : F.node->children) {
+                if (ch && ch->type == ASTNodeType::PARAMETER_LIST) {
+                    params = ch;
+                    break;
+                }
+            }
+            if (params) {
+                for (auto& p : params->children) {
+                    if (!p || p->type != ASTNodeType::PARAMETER) continue;
+                    if (p->value != name) continue;
+                    for (auto& pc : p->children) {
+                        if (pc && pc->type == ASTNodeType::USER_TYPE) {
+                            recordTypeOut = pc->value;
+                            return true;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    
+    return false;
+}
+
 void WasmCompiler::collectRecordTypes(std::shared_ptr<ASTNode> program) {
     for (auto& n : program->children) {
         if (!n || n->type != ASTNodeType::TYPE_DECL) continue;
@@ -3550,9 +3588,9 @@ ValueType WasmCompiler::getExpressionType(std::shared_ptr<ASTNode> expr, const F
                 std::string fieldName = expr->value;
                 
                 if (base->type == ASTNodeType::IDENTIFIER) {
-                    auto recordIt = recordVariables.find(base->value);
-                    if (recordIt != recordVariables.end()) {
-                        auto recordTypeIt = recordTypes.find(recordIt->second.recordType);
+                    std::string recordTypeName;
+                    if (resolveRecordTypeForIdentifier(base->value, F, recordTypeName)) {
+                        auto recordTypeIt = recordTypes.find(recordTypeName);
                         if (recordTypeIt != recordTypes.end()) {
                             for (const auto& field : recordTypeIt->second.fields) {
                                 if (field.first == fieldName) {

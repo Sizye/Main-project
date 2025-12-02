@@ -7,6 +7,5 @@ end
 routine main(): real is
     var asd: array[3] real;
     checkArrayPass(asd);
-    asd[1] :=234;
     return asd[1];
 end

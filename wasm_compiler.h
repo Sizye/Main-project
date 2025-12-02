@@ -175,6 +175,9 @@ private:
     wasm::Expression* generateArrayAssignment(std::shared_ptr<ASTNode> arrayAccess,
                                              wasm::Expression* rhs,
                                              const FuncInfo& F);
+    bool resolveRecordTypeForIdentifier(const std::string& name,
+                                        const FuncInfo& F,
+                                        std::string& recordTypeOut) const;
     std::tuple<int, wasm::Type, int> resolveArrayMember(std::shared_ptr<ASTNode> memberAccess,
                                                        const FuncInfo& F);
     wasm::Expression* generateArrayAccessForRecord(std::shared_ptr<ASTNode> arrayAccess,

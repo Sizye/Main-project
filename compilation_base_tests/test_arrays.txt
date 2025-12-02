@@ -1,5 +1,5 @@
 routine main(): integer is
   var arr : array[10000000] integer;
   arr[5000] := 432;
-  return arr[20000];
+  return arr[5000];
 end
