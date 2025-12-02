@@ -34,21 +34,6 @@ static const char* tname(ASTNodeType t) {
     }
 }
 
-// ======================================================================
-// Helper: Convert ValueType to Binaryen Type
-// ======================================================================
-
-wasm::Type WasmCompiler::valueTypeToWasmType(ValueType vt) {
-    switch (vt) {
-        case ValueType::INTEGER:
-        case ValueType::BOOLEAN:
-            return wasm::Type::i32;
-        case ValueType::REAL:
-            return wasm::Type::f64;
-        default:
-            return wasm::Type::i32;
-    }
-}
 
 // ======================================================================
 // Public API
@@ -2415,25 +2400,6 @@ wasm::Expression* WasmCompiler::emitLocalSet(const std::string& name, wasm::Expr
     return builder.makeDrop(value);
 }
 
-wasm::Expression* WasmCompiler::emitI32Load(uint32_t offset) {
-    wasm::Expression* addr = builder.makeConst(wasm::Literal(static_cast<int32_t>(offset)));
-    return builder.makeLoad(4, false, 0, 0, addr, wasm::Type::i32, wasm::Name("memory"));
-}
-
-wasm::Expression* WasmCompiler::emitI32Store(uint32_t offset, wasm::Expression* value) {
-    wasm::Expression* addr = builder.makeConst(wasm::Literal(static_cast<int32_t>(offset)));
-    return builder.makeStore(4, 0, 0, addr, value, wasm::Type::i32, wasm::Name("memory"));
-}
-
-wasm::Expression* WasmCompiler::emitF64Load(uint32_t offset) {
-    wasm::Expression* addr = builder.makeConst(wasm::Literal(static_cast<int32_t>(offset)));
-    return builder.makeLoad(8, false, 0, 0, addr, wasm::Type::f64, wasm::Name("memory"));
-}
-
-wasm::Expression* WasmCompiler::emitF64Store(uint32_t offset, wasm::Expression* value) {
-    wasm::Expression* addr = builder.makeConst(wasm::Literal(static_cast<int32_t>(offset)));
-    return builder.makeStore(8, 0, 0, addr, value, wasm::Type::f64, wasm::Name("memory"));
-}
 
 void WasmCompiler::setupMemory() {
     int totalMemoryNeeded = globalMemoryOffset;
@@ -2490,10 +2456,6 @@ std::tuple<wasm::Type, std::string, int> WasmCompiler::analyzeArrayType(std::sha
     return {elemType, typeName, size};
 }
 
-wasm::Type WasmCompiler::getArrayType(std::shared_ptr<ASTNode> arrayTypeNode) {
-    auto [elemType, elemTypeName, _] = analyzeArrayType(arrayTypeNode);
-    return elemType;
-}
 
 // ======================================================================
 // Array and Member Access Generation
@@ -3434,22 +3396,6 @@ wasm::Expression* WasmCompiler::generateMemberAssignment(std::shared_ptr<ASTNode
     }
 }
 
-// Placeholder implementations for complex array/member access resolution
-std::tuple<int, wasm::Type, int> WasmCompiler::resolveArrayMember(std::shared_ptr<ASTNode> memberAccess,
-                                                                   const FuncInfo& F) {
-    return {-1, wasm::Type::i32, 0};
-}
-
-wasm::Expression* WasmCompiler::generateArrayAccessForRecord(std::shared_ptr<ASTNode> arrayAccess,
-                                                              const FuncInfo& F) {
-    return emitI32Const(0);
-}
-
-std::tuple<int, wasm::Type, int> WasmCompiler::resolveArrayAccessMember(std::shared_ptr<ASTNode> arrayAccess,
-                                                                       const std::string& fieldName,
-                                                                       const FuncInfo& F) {
-    return {-1, wasm::Type::i32, 0};
-}
 
 // ======================================================================
 // Type System
