@@ -19,5 +19,3 @@
   ./lexer [input.txt] [output.txt]
     ```
 Then write any string from I toy programming language and program will return program in tokens.
-
-# ALL PULL REQUESTS IN MAIN MUST COMPLETE PARSING OF ULTIMATE_TEST.txt OR REPORT ACTUAL ERROR IN TEST ITSELF.
